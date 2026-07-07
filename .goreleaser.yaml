@@ -1,0 +1,64 @@
+# GoReleaser — готовые бинарники sec + Homebrew-формула, чтобы ставить CLI без Go.
+# Запуск: в CI на push git-тега `v*` (см. .github/workflows/release.yml) либо
+# локально `goreleaser release --clean` (нужен goreleaser и токены).
+# Проверить конфиг: `goreleaser check`. Сухой прогон: `goreleaser release --snapshot --clean`.
+#
+# РАСКЛАДКА РЕПО: здесь предполагается, что репозиторий github.com/kaidstor/sec —
+# это весь скилл, а Go-модуль лежит в подпапке cli/ (отсюда `dir: cli`). Если
+# делаешь отдельный CLI-репо (go.mod в корне) — поменяй `dir: cli` → `dir: .`
+# и перенеси этот файл + .github/ в корень того репо.
+version: 2
+
+project_name: sec
+
+builds:
+  - id: sec
+    dir: cli # модуль в cli/; для CLI-репо с go.mod в корне ставь `.`
+    main: .
+    binary: sec
+    env:
+      - CGO_ENABLED=0 # бэкенды keyring дергают `security`/`secret-tool` через exec, cgo не нужен → статический бинарь
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/kaidstor/sec/internal/command.version={{ .Version }}
+      - -X github.com/kaidstor/sec/internal/command.commit={{ .ShortCommit }}
+      - -X github.com/kaidstor/sec/internal/command.date={{ .CommitDate }}
+
+archives:
+  - id: sec
+    formats: [tar.gz] # goreleaser < v2.4 использует `format: tar.gz` (единственное число)
+    name_template: "sec_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude: ["^docs:", "^test:", "^chore:"]
+
+# Автогенерация и пуш Homebrew-формулы в tap-репозиторий. После первого релиза
+# пользователи ставят CLI так:  brew install kaidstor/tap/sec
+brews:
+  - name: sec
+    repository:
+      owner: kaidstor
+      name: homebrew-tap # заведи публичный репо github.com/kaidstor/homebrew-tap
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}" # PAT с правом записи в tap-репо (secret в CI)
+    directory: Formula
+    homepage: "https://github.com/kaidstor/sec"
+    description: "Локальный менеджер секретов для безопасной работы с агентами (значения не попадают в argv/историю/чат)"
+    license: "MIT" # соответствует файлу LICENSE в корне репо
+    commit_author:
+      name: goreleaser
+      email: goreleaser@users.noreply.github.com
+    install: |
+      bin.install "sec"
+    test: |
+      system "#{bin}/sec", "version"

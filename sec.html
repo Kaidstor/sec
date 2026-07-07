@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>sec — локальный менеджер секретов</title>
+<style>
+  :root{
+    --bg:#f7f8fa; --panel:#ffffff; --ink:#1a1d24; --muted:#5b6472;
+    --line:#e5e8ee; --accent:#0f766e; --accent-soft:#0f766e14;
+    --code-bg:#f2f4f7; --code-ink:#0b3d39; --badge:#0f766e; --badge-bg:#0f766e18;
+    --warn:#9a3412; --warn-bg:#9a341214; --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --bg:#0d1117; --panel:#161b22; --ink:#e6edf3; --muted:#9098a5;
+      --line:#232a34; --accent:#2dd4bf; --accent-soft:#2dd4bf1a;
+      --code-bg:#0b0f14; --code-ink:#7fe9dd; --badge:#5eead4; --badge-bg:#2dd4bf1f;
+      --warn:#fca5a5; --warn-bg:#fca5a512;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#0d1117; --panel:#161b22; --ink:#e6edf3; --muted:#9098a5;
+    --line:#232a34; --accent:#2dd4bf; --accent-soft:#2dd4bf1a;
+    --code-bg:#0b0f14; --code-ink:#7fe9dd; --badge:#5eead4; --badge-bg:#2dd4bf1f;
+    --warn:#fca5a5; --warn-bg:#fca5a512;
+  }
+  :root[data-theme="light"]{
+    --bg:#f7f8fa; --panel:#ffffff; --ink:#1a1d24; --muted:#5b6472;
+    --line:#e5e8ee; --accent:#0f766e; --accent-soft:#0f766e14;
+    --code-bg:#f2f4f7; --code-ink:#0b3d39; --badge:#0f766e; --badge-bg:#0f766e18;
+    --warn:#9a3412; --warn-bg:#9a341214;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;}
+  .wrap{max-width:1000px;margin:0 auto;padding:0 20px 80px}
+  header{padding:56px 0 28px;border-bottom:1px solid var(--line);margin-bottom:8px}
+  .logo{display:inline-flex;align-items:baseline;gap:14px;flex-wrap:wrap}
+  .logo h1{font:800 40px/1 var(--mono);letter-spacing:-1px;margin:0;color:var(--ink)}
+  .logo .dot{color:var(--accent)}
+  .tag{color:var(--muted);font-size:17px;margin:14px 0 0;max-width:70ch}
+  .promise{margin-top:18px;display:inline-block;background:var(--accent-soft);
+    border:1px solid var(--line);border-radius:10px;padding:10px 14px;font-size:14.5px}
+  .promise b{color:var(--accent)}
+  h2{font-size:14px;text-transform:uppercase;letter-spacing:.09em;color:var(--accent);
+    margin:44px 0 14px;font-weight:700}
+  h3{font-size:18px;margin:0 0 4px}
+  p{margin:0 0 12px}
+  a{color:var(--accent)}
+  .grid{display:grid;gap:16px;grid-template-columns:repeat(auto-fill,minmax(340px,1fr))}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px 18px 6px}
+  .card > .head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:12px}
+  .card h3{font-size:15px;color:var(--muted);text-transform:none;font-weight:600;letter-spacing:0}
+  .cmd{margin:0 0 14px}
+  .cmd code{display:block;font-family:var(--mono);font-size:12.5px;line-height:1.55;
+    background:var(--code-bg);color:var(--code-ink);border-radius:8px;padding:7px 11px;
+    white-space:pre-wrap;overflow-wrap:anywhere;word-break:normal}
+  .cmd .d{color:var(--muted);font-size:13.5px;margin:5px 2px 0}
+  .badge{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.02em;
+    color:var(--badge);background:var(--badge-bg);border-radius:999px;padding:2px 9px;white-space:nowrap}
+  .prose{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px 22px;margin-bottom:16px}
+  .prose h3{margin-top:0}
+  .prose code,.inline{font-family:var(--mono);font-size:.86em;background:var(--code-bg);
+    color:var(--code-ink);padding:1px 6px;border-radius:5px}
+  .prose ul{margin:8px 0 4px;padding-left:20px}
+  .prose li{margin:5px 0}
+  .warn{border-left:3px solid var(--warn);background:var(--warn-bg);padding:12px 16px;border-radius:0 10px 10px 0}
+  .two{display:grid;gap:16px;grid-template-columns:1fr 1fr}
+  @media (max-width:720px){.two{grid-template-columns:1fr}}
+  .toggle{position:fixed;top:16px;right:16px;background:var(--panel);border:1px solid var(--line);
+    color:var(--muted);border-radius:10px;padding:7px 11px;font-size:13px;cursor:pointer}
+  footer{margin-top:52px;padding-top:20px;border-top:1px solid var(--line);color:var(--muted);font-size:13.5px}
+  .steps code{font-family:var(--mono);font-size:13px;background:var(--code-bg);color:var(--code-ink);
+    padding:2px 7px;border-radius:6px}
+</style>
+</head>
+<body>
+<button class="toggle" onclick="(function(){var r=document.documentElement;var d=(r.getAttribute('data-theme')|| (matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light'))==='dark';r.setAttribute('data-theme',d?'light':'dark');})()">◐ тема</button>
+<div class="wrap">
+
+<header>
+  <div class="logo"><h1>sec<span class="dot">.</span></h1><span class="tag" style="margin:0">локальный менеджер секретов для агентных сессий</span></div>
+  <p class="tag">Хранилище — один файл XChaCha20‑Poly1305, мастер‑ключ в macOS&nbsp;Keychain. Сделан так,
+     чтобы <b>значения секретов не попадали в argv, историю shell и чат агента</b>: ввод скрытый /
+     из stdin / из буфера, потребление — через env‑инъекцию или запись в файл.</p>
+  <div class="promise">🔒 <b>Значение секрета не проходит через argv и не печатается в чат</b> — если только вы явно не попросили.</div>
+</header>
+
+<h2>Быстрый старт</h2>
+<div class="prose steps">
+  <p>CLI поставляется со скиллом; для сборки нужен только Go (единственная зависимость — <span class="inline">golang.org/x/crypto</span> для Argon2id — завендорена, сборка офлайн). Wrapper собирает бинарь при первом вызове:</p>
+  <p><code>"&lt;skill-dir&gt;/sec.sh" ls</code> &nbsp;·&nbsp; либо <code>cd cli &amp;&amp; just build</code> → <code>../bin/sec</code> &nbsp;·&nbsp; <code>just install</code> → прямой вызов <code>sec</code></p>
+  <p style="margin-bottom:0">Адрес секрета — <span class="inline">&lt;proj&gt;/&lt;KEY&gt;</span>. Если проект опущен, берётся имя текущей папки:
+     внутри <span class="inline">~/Projects/rebrandy/whois</span> достаточно <span class="inline">sec run -- just dev</span>.</p>
+</div>
+
+<h2>Завести секрет</h2>
+<div class="grid">
+  <div class="card">
+    <div class="head"><h3>set — сохранить</h3></div>
+    <div class="cmd"><code>sec set whois/API_TOKEN</code><div class="d">скрытый ввод дважды (нужен TTY)</div></div>
+    <div class="cmd"><code>sec set whois/API_TOKEN --clipboard --clear</code><div class="d">взять из буфера и очистить его</div></div>
+    <div class="cmd"><code>cat token.txt | sec set whois/API_TOKEN</code><div class="d">из stdin / файла</div></div>
+    <div class="cmd"><code>sec set whois/API_TOKEN --note "реестр" --kind apikey</code><div class="d">+ метаданные сразу</div></div>
+  </div>
+  <div class="card">
+    <div class="head"><h3>gen — придумать, не видя</h3></div>
+    <div class="cmd"><code>sec gen whois/ADMIN --len 24 --symbols</code><div class="d">криптостойкое значение, агент его не видит</div></div>
+    <div class="cmd"><code>sec gen whois/ADMIN --len 32 --clip</code><div class="d">+ положить в буфер для вставки в форму</div></div>
+  </div>
+</div>
+
+<h2>Получить и потребить</h2>
+<div class="grid">
+  <div class="card">
+    <div class="head"><h3>get — прочитать</h3></div>
+    <div class="cmd"><code>sec get whois/API_TOKEN</code><div class="d">напечатать (только по явной просьбе)</div></div>
+    <div class="cmd"><code>sec get whois/API_TOKEN --clip --clear-after 20s</code><div class="d">молча в буфер, авто‑очистка через 20с</div></div>
+    <div class="cmd"><code>sec get whois/API_TOKEN --once</code><div class="d">показать и сразу удалить ключ</div></div>
+    <div class="cmd"><code>sec get whois/API_TOKEN --prev 1</code><div class="d">предыдущее значение из истории</div></div>
+  </div>
+  <div class="card">
+    <div class="head"><h3>run / export / render</h3></div>
+    <div class="cmd"><code>sec run whois -- just dev</code><div class="d">env‑инъекция секретов проекта в процесс</div></div>
+    <div class="cmd"><code>sec run findler --only YT_TOKEN -- ./sync.sh</code><div class="d">только выбранные ключи</div></div>
+    <div class="cmd"><code>sec export whois --file .env</code><div class="d">собрать .env (только в файл, 0600)</div></div>
+    <div class="cmd"><code>sec render config.tpl --file config.yml</code><div class="d">шаблон {{ secret "proj/KEY" }} → файл</div></div>
+  </div>
+</div>
+
+<h2>Свериться, не раскрывая значение</h2>
+<div class="grid">
+  <div class="card">
+    <div class="head"><h3>маска и отпечаток</h3><span class="badge">безопасно для чата</span></div>
+    <div class="cmd"><code>sec get whois/API_TOKEN --peek</code><div class="d">маска ab…yz + длина</div></div>
+    <div class="cmd"><code>sec get whois/API_TOKEN --fingerprint</code><div class="d">fp:… — HMAC на мастер‑ключе, не перебрать</div></div>
+  </div>
+  <div class="card">
+    <div class="head"><h3>verify / diff</h3></div>
+    <div class="cmd"><code>sec verify whois/API_TOKEN</code><div class="d">совпадает ли кандидат с сохранённым (да/нет)</div></div>
+    <div class="cmd"><code>sec diff staging prod</code><div class="d">какие ключи совпадают/различаются</div></div>
+  </div>
+</div>
+
+<h2>История: undo / redo / forget</h2>
+<div class="two">
+  <div class="prose">
+    <h3>Навигация как в редакторе</h3>
+    <p>Каждый <span class="inline">set</span> поверх ключа утаскивает старое значение в историю (до 5 версий).
+       <span class="inline">undo</span> шагает на версию назад (повторный — глубже, до самой старой, потом стена),
+       <span class="inline">redo</span> возвращает вперёд; новый <span class="inline">set</span> обнуляет redo.</p>
+    <div class="cmd"><code>sec history whois/API_TOKEN [--json]</code></div>
+    <div class="cmd"><code>sec undo whois/API_TOKEN   ·   sec redo whois/API_TOKEN</code></div>
+  </div>
+  <div class="prose">
+    <h3>Ротация скомпрометированного</h3>
+    <p>Обычный <span class="inline">gen</span>/<span class="inline">set</span> не удаляет старое значение —
+       оно живёт в истории ещё до 5 перезаписей. <span class="inline">forget</span> вычищает историю и redo,
+       оставляя только текущее (необратимо — после проверки нового).</p>
+    <div class="cmd"><code>sec gen whois/API_TOKEN --len 40</code></div>
+    <div class="cmd"><code>sec forget whois/API_TOKEN</code></div>
+  </div>
+</div>
+
+<h2>Метаданные и гигиена ротации</h2>
+<div class="grid">
+  <div class="card">
+    <div class="head"><h3>meta — назначение и политика</h3></div>
+    <div class="cmd"><code>sec meta whois/API_TOKEN --note "реестр" --kind apikey</code></div>
+    <div class="cmd"><code>sec meta whois/API_TOKEN --rotate-every 90d --rotate-url https://dash/keys</code></div>
+    <div class="cmd"><code>sec meta whois/API_TOKEN --expires 2026-12-01</code></div>
+  </div>
+  <div class="card">
+    <div class="head"><h3>stale / doctor</h3></div>
+    <div class="cmd"><code>sec stale [--older-than 90d]</code><div class="d">что пора ротировать (ненулевой код — гейт CI)</div></div>
+    <div class="cmd"><code>sec doctor</code><div class="d">права стора, бэкенд ключа, дубли значений, просрочки</div></div>
+  </div>
+</div>
+
+<h2>Защита от утечки</h2>
+<div class="prose">
+  <h3>scan — найти сохранённые значения в открытом виде</h3>
+  <p>Ловит секрет до коммита/лога/публикации. Печатает только <span class="inline">файл:строка → ключ</span>,
+     значение не раскрывает; ненулевой код при находках — годится как pre‑commit хук / CI‑гейт.</p>
+  <div class="two" style="margin-top:6px">
+    <div class="cmd"><code>sec scan src/ .env config/</code><div class="d">файлы и каталоги</div></div>
+    <div class="cmd"><code>sec scan --staged</code><div class="d">git diff --cached (перед коммитом)</div></div>
+  </div>
+
+  <h3 style="margin-top:14px">redact — вычистить значения из текста</h3>
+  <p>Обратная сторона scan: не находит, а отдаёт очищенный текст — каждое сохранённое значение
+     меняет на <span class="inline">[redacted:proj/KEY]</span>. Безопасно показать лог/дифф/вывод команды в чате.</p>
+  <div class="two" style="margin-top:6px">
+    <div class="cmd"><code>just dev 2>&amp;1 | sec redact</code><div class="d">очистить вывод команды → stdout</div></div>
+    <div class="cmd"><code>sec redact app.log --file safe.log</code><div class="d">результат в файл 0600</div></div>
+  </div>
+</div>
+
+<h2>Инстансы / окружения</h2>
+<div class="two">
+  <div class="prose">
+    <h3>Один сервис — несколько наборов</h3>
+    <p>Разные компании/стенды (<span class="inline">commercial</span>, <span class="inline">max</span>, <span class="inline">prod</span>) — одни ключи, свои значения.
+       Необязательная третья ось: <span class="inline">&lt;proj&gt;</span> — сервис, <span class="inline">-e &lt;инстанс&gt;</span> выбирает набор. Внутри — проект <span class="inline">service@env</span>; сервисы без инстансов не меняются.</p>
+    <div class="cmd"><code>sec set some-bot/BOT_TOKEN -e commercial</code></div>
+    <div class="cmd"><code>sec run some-bot -e max -- just start</code></div>
+    <div class="cmd"><code>sec ls some-bot          ·  sec diff some-bot -e commercial max</code></div>
+  </div>
+  <div class="prose">
+    <h3>Объявление в .sec</h3>
+    <p>Файл в папке сервиса декларирует инстансы и дефолт — читают и CLI (подставляет дефолт без <span class="inline">-e</span>), и агент. <span class="inline">sec check [--all-envs]</span> валидирует ключи инстанса(ов).</p>
+    <div class="cmd"><code>project: some-bot
+envs:    commercial, max
+default: commercial
+keys:    BOT_TOKEN, DB_PASSWORD</code></div>
+  </div>
+</div>
+
+<h2>Ссылки и наследование <span class="badge">общее значение — один источник</span></h2>
+<div class="two">
+  <div class="prose">
+    <h3>link — одно значение</h3>
+    <p>Когда значение нужно нескольким пачкам — не копируй, а свяжи: <span class="inline">proj/KEY</span> отдаёт <b>живое</b> значение родителя, правка в родителе видна везде сразу.</p>
+    <div class="cmd"><code>sec link app/DB_URL shared/DATABASE_URL</code><div class="d">get/run/export/render берут значение родителя</div></div>
+    <div class="cmd"><code>sec unlink app/DB_URL</code><div class="d">сделать значение собственным (материализовать)</div></div>
+  </div>
+  <div class="prose">
+    <h3>extend — вся пачка</h3>
+    <p>Проект видит все ключи родителя <b>read-only</b>, собственные перекрывают; <span class="inline">run</span>/<span class="inline">export</span> инъектят объединение. В <span class="inline">sec ls</span> ссылки помечены <span class="inline">→</span>, унаследованные <span class="inline">⤷</span>.</p>
+    <div class="cmd"><code>sec extend app --from base</code><div class="d">· sec extend app --remove base</div></div>
+    <div class="cmd"><code>sec set app/KEY --override</code><div class="d">дать проекту своё значение поверх унаследованного</div></div>
+  </div>
+</div>
+<p class="d" style="margin:12px 2px 0">Значение по ссылке/наследованию нельзя менять в потомке — <span class="inline" style="font-size:12px">set/gen/undo/import</span> откажутся и подскажут родителя. Циклы отклоняются при создании; связи переживают backup/restore и sync. <span class="inline" style="font-size:12px">rm</span> ключа/проекта, на который ссылаются или от которого наследуют, предупреждает (что станет битым, кто потеряет ключи), но выполняется — то же для <span class="inline" style="font-size:12px">get --once</span>.</p>
+
+<h2>Организация и проверка</h2>
+<div class="grid">
+  <div class="card">
+    <div class="head"><h3>ls / mv / cp / rm</h3></div>
+    <div class="cmd"><code>sec ls [proj] [-l|--json] [-e env]</code><div class="d">сервисы → инстансы → ключи (без значений)</div></div>
+    <div class="cmd"><code>sec mv whois/OLD whois/NEW</code><div class="d">перенос/переименование без раскрытия</div></div>
+    <div class="cmd"><code>sec cp whois/KEY staging/KEY</code><div class="d">копия, оригинал на месте</div></div>
+    <div class="cmd"><code>sec rm whois/KEY   ·   sec rm whois --all</code></div>
+  </div>
+  <div class="card">
+    <div class="head"><h3>check — манифест .sec</h3></div>
+    <div class="cmd"><code>sec check [proj] [-e env | --all-envs]</code><div class="d">все ли требуемые ключи заведены</div></div>
+    <p class="d" style="margin:0 2px 12px">Файл <span class="inline" style="font-size:12px">.sec</span> — <span class="inline" style="font-size:12px">project/envs/default/keys</span> (или просто список ключей по строке).</p>
+  </div>
+</div>
+
+<h2>Перенос, синхронизация, ключ</h2>
+<div class="grid">
+  <div class="card">
+    <div class="head"><h3>backup / restore / sync</h3></div>
+    <div class="cmd"><code>sec backup --file bak.enc</code><div class="d">весь стор под passphrase (Argon2id + XChaCha20)</div></div>
+    <div class="cmd"><code>sec restore --file bak.enc [--replace]</code><div class="d">merge (умолч.) или замена</div></div>
+    <div class="cmd"><code>sec sync --file ~/Dropbox/sec.enc</code><div class="d">merge из блоба + push обратно; Keychain не нужен</div></div>
+  </div>
+  <div class="card">
+    <div class="head"><h3>rekey — ротация мастер‑ключа</h3></div>
+    <div class="cmd"><code>sec rekey</code><div class="d">новый ключ + перешифровка стора, с откатом при сбое</div></div>
+    <p class="d" style="margin:0 2px 12px">Значения сохраняются. Для <span class="inline" style="font-size:12px">SEC_KEY</span> (env) новый ключ печатается — сразу прописать в окружение.</p>
+  </div>
+</div>
+
+<h2>Мост с Infisical</h2>
+<div class="prose">
+  <p>Двусторонний обмен с Infisical (командный источник истины) через их CLI — нужен <span class="inline">infisical login</span>.
+     Значения не текут в argv: pull берёт их из stdout экспорта, push — через временный <span class="inline">.env</span> 0600.</p>
+  <div class="two" style="margin-top:6px">
+    <div class="cmd"><code>sec import whois --from-infisical --infisical-env dev</code><div class="d">Infisical → локальный стор</div></div>
+    <div class="cmd"><code>sec push whois --to-infisical --infisical-env dev</code><div class="d">локальный стор → Infisical</div></div>
+  </div>
+  <p style="margin:12px 0 0" class="d">Инстанс в sec задаётся <span class="inline" style="font-size:12px">-e</span>, окружение Infisical — отдельным
+     <span class="inline" style="font-size:12px">--infisical-env</span> (по умолчанию = значению <span class="inline" style="font-size:12px">-e</span>). Без
+     <span class="inline" style="font-size:12px">--projectId</span> проект берётся из окружающего <span class="inline" style="font-size:12px">.infisical.json</span>.
+     Бэкенд вынесен в пакет <span class="inline" style="font-size:12px">internal/infisical</span> и заменяем (CLI сейчас, REST API — позже).</p>
+</div>
+
+<h2>2FA и журнал</h2>
+<div class="grid">
+  <div class="card">
+    <div class="head"><h3>otp — TOTP‑код</h3><span class="badge">код эфемерный</span></div>
+    <div class="cmd"><code>sec otp github/OTP</code><div class="d">seed (base32 / otpauth://) сохранён обычным set</div></div>
+  </div>
+  <div class="card">
+    <div class="head"><h3>log / info</h3></div>
+    <div class="cmd"><code>sec log [proj[/KEY]] [-n 20] [--json]</code><div class="d">кто/когда/что трогал (без значений)</div></div>
+    <div class="cmd"><code>sec info [--json]</code><div class="d">путь к стору, бэкенд ключа, статистика</div></div>
+  </div>
+</div>
+
+<h2>Как хранится и что защищает</h2>
+<div class="two">
+  <div class="prose">
+    <h3>Хранение</h3>
+    <ul>
+      <li><b>Стор</b> — один файл <span class="inline">~/.local/share/sec/store.enc</span>, целиком XChaCha20‑Poly1305 (192‑битный nonce), 0600, запись атомарная под flock.</li>
+      <li><b>Мастер‑ключ</b> (32 байта) по порядку: env <span class="inline">SEC_KEY</span> → системное хранилище ОС → файл <span class="inline">~/.config/sec/key</span>.</li>
+      <li>Системное хранилище — macOS Keychain (<span class="inline">security</span>) или Linux libsecret (<span class="inline">secret-tool</span>); ключ уходит утилите через stdin — в <span class="inline">ps</span> не светится. Нет хранилища → файл / <span class="inline">SEC_KEY</span>.</li>
+    </ul>
+  </div>
+  <div class="prose">
+    <h3>Модель угроз</h3>
+    <p>Защищает от <b>случайной утечки</b> секретов в чаты агентов, историю shell, скриншоты и логи.
+       Не защищает от локального root/малвари — как любой менеджер с расшифровкой на той же машине.</p>
+    <div class="warn">Буфер: то, что sec кладёт сам (<span class="inline" style="font-size:12px">--clip</span>), на macOS помечается
+       <span class="inline" style="font-size:12px">ConcealedType</span> и не пишется в историю менеджеров (Raycast, Maccy…).
+       Значение, скопированное пользователем самим (<span class="inline" style="font-size:12px">set --clipboard</span>), могло уже осесть в истории.</div>
+  </div>
+</div>
+
+<footer>
+  sec — часть скилла <span class="inline">sec</span>. Подробности и исходники: <span class="inline">cli/README.md</span>, инструкция для агента: <span class="inline">SKILL.md</span>.
+  Хранилище XChaCha20‑Poly1305 · мастер‑ключ в Keychain · бэкап Argon2id · зависимости завендорены.
+</footer>
+
+</div>
+</body>
+</html>

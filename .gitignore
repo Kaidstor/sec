@@ -1,0 +1,5 @@
+# сборка GoReleaser
+/dist/
+
+# macOS
+.DS_Store

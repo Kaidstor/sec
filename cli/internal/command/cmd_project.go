@@ -1,0 +1,480 @@
+package command
+
+// Команды над проектом/стором целиком: ls / run / export / import / log / info.
+
+import (
+	"github.com/kaidstor/sec/internal/audit"
+	"github.com/kaidstor/sec/internal/dotenv"
+	"github.com/kaidstor/sec/internal/keyring"
+	"github.com/kaidstor/sec/internal/store"
+
+	"encoding/json"
+	"flag"
+	"fmt"
+	"os"
+	"os/exec"
+	"strings"
+	"syscall"
+)
+
+func lsCommand(args []string) int {
+	service, rest := splitArgs(args)
+	fs := flag.NewFlagSet("ls", flag.ExitOnError)
+	var long, asJSON bool
+	fs.BoolVar(&long, "l", false, "показать даты обновления / метаданные")
+	fs.BoolVar(&asJSON, "json", false, "машинный вывод JSON (без значений)")
+	getEnv := addEnvFlag(fs)
+	_ = fs.Parse(rest)
+	if service == "" {
+		service = fs.Arg(0)
+	}
+	env := getEnv()
+	checkEnv(env)
+
+	st, mkey, _, err := store.Open(false)
+	if err != nil {
+		die("%v", err)
+	}
+
+	// инстансы сервиса (env-части ключей вида service@env), отсортированные
+	instancesOf := func(svc string) []string {
+		set := map[string]struct{}{}
+		for p := range st.Projects {
+			if b, e := store.BaseAndEnv(p); b == svc && e != "" {
+				set[e] = struct{}{}
+			}
+		}
+		return store.SortedKeys(set)
+	}
+
+	if asJSON {
+		type keyInfo struct {
+			Key         string      `json:"key"`
+			Ref         string      `json:"ref,omitempty"` // CLI-адрес родителя, если ключ — ссылка
+			UpdatedAt   string      `json:"updatedAt"`
+			History     int         `json:"history"`
+			Chars       int         `json:"chars"`
+			Fingerprint string      `json:"fingerprint"`
+			Meta        *store.Meta `json:"meta,omitempty"`
+		}
+		build := func(proj string) []keyInfo {
+			own := st.Projects[proj]
+			out := []keyInfo{}
+			for _, k := range store.SortedKeys(own) {
+				s := own[k]
+				info := keyInfo{Key: k, UpdatedAt: s.UpdatedAt, History: len(s.History), Meta: s.Meta}
+				val := s.Value
+				if s.Ref != "" { // ссылка — отпечаток/длина считаем по значению родителя
+					info.Ref = store.RefToCLI(s.Ref)
+					if r, _, ok := st.ResolveSecret(proj, k); ok {
+						val = r.Value
+					} else {
+						val = ""
+					}
+				}
+				info.Chars = len([]rune(val))
+				info.Fingerprint = store.Fingerprint(mkey, val)
+				out = append(out, info)
+			}
+			return out
+		}
+		var v any
+		switch {
+		case service == "":
+			m := map[string][]keyInfo{}
+			for p := range st.Projects {
+				m[p] = build(p)
+			}
+			v = m
+		case env == "" && len(instancesOf(service)) > 0:
+			m := map[string][]keyInfo{}
+			for _, e := range instancesOf(service) {
+				m[e] = build(store.ProjKey(service, e))
+			}
+			v = m
+		default:
+			v = build(store.ProjKey(service, env))
+		}
+		data, _ := json.MarshalIndent(v, "", "  ")
+		fmt.Println(string(data))
+		return 0
+	}
+
+	// список сервисов: группируем service@env под базовым сервисом
+	if service == "" {
+		if len(st.Projects) == 0 {
+			fmt.Println("хранилище пусто")
+			return 0
+		}
+		bases := map[string]struct{}{}
+		for p := range st.Projects {
+			b, _ := store.BaseAndEnv(p)
+			bases[b] = struct{}{}
+		}
+		for _, b := range store.SortedKeys(bases) {
+			if insts := instancesOf(b); len(insts) > 0 {
+				fmt.Printf("%-24s инстансы: %s\n", b, strings.Join(insts, ", "))
+			} else {
+				fmt.Printf("%-24s %d ключ(ей)\n", b, len(st.Projects[b]))
+			}
+		}
+		return 0
+	}
+
+	// сервис без -e и с инстансами → показать инстансы
+	if env == "" {
+		if insts := instancesOf(service); len(insts) > 0 {
+			for _, e := range insts {
+				fmt.Printf("%-18s -e %-14s %d ключ(ей)\n", service, e, len(st.Projects[store.ProjKey(service, e)]))
+			}
+			return 0
+		}
+	}
+
+	// ключи конкретного проекта (service или service@env), включая унаследованные
+	sp := store.ProjKey(service, env)
+	eff := st.EffectiveKeys(sp)
+	if len(eff) == 0 {
+		die("проект %q пуст или не существует (sec ls)", sp)
+	}
+	if parents := st.Extends[sp]; len(parents) > 0 {
+		var labels []string
+		for _, p := range parents {
+			if svc, penv := store.BaseAndEnv(p); penv == "" {
+				labels = append(labels, svc)
+			} else {
+				labels = append(labels, svc+" -e "+penv)
+			}
+		}
+		fmt.Printf("наследует (read-only): %s\n", strings.Join(labels, ", "))
+	}
+	for _, k := range store.SortedKeys(eff) {
+		_, org, source, _ := st.Lookup(sp, k)
+		mark := ""
+		switch org {
+		case store.OriginRef:
+			mark = "  → " + store.RefToCLI(source)
+		case store.OriginExtend:
+			mark = "  ⤷ " + store.RefToCLI(source)
+		}
+		if long {
+			s := eff[k]
+			h := ""
+			if n := len(s.History); n > 0 {
+				h = fmt.Sprintf("  (+%d в истории)", n)
+			}
+			tag := ""
+			if s.Meta != nil {
+				var parts []string
+				if s.Meta.Kind != "" {
+					parts = append(parts, s.Meta.Kind)
+				}
+				if s.Meta.Note != "" {
+					parts = append(parts, s.Meta.Note)
+				}
+				if due, _, ok := dueAt(s); ok && timeNowAfter(due) {
+					parts = append(parts, "ПОРА РОТИРОВАТЬ")
+				}
+				if len(parts) > 0 {
+					tag = "  — " + strings.Join(parts, ", ")
+				}
+			}
+			fmt.Printf("%-32s %s%s%s%s\n", k, fmtTime(s.UpdatedAt), h, tag, mark)
+		} else {
+			fmt.Println(k + mark)
+		}
+	}
+	return 0
+}
+
+// runCommand запускает команду, подменив себя ею (exec) с env-инъекцией
+// секретов проекта — значения живут только в окружении дочернего процесса.
+func runCommand(args []string) int {
+	sep := -1
+	for i, a := range args {
+		if a == "--" {
+			sep = i
+			break
+		}
+	}
+	if sep < 0 {
+		die("нужен разделитель --: sec run [proj] [--only A,B] -- cmd args...")
+	}
+	head, tail := args[:sep], args[sep+1:]
+	if len(tail) == 0 {
+		die("нет команды после --")
+	}
+
+	service, rest := splitArgs(head)
+	fs := flag.NewFlagSet("run", flag.ExitOnError)
+	var only string
+	var verbose bool
+	fs.StringVar(&only, "only", "", "инъектить только перечисленные ключи (через запятую)")
+	fs.BoolVar(&verbose, "v", false, "показать имена инъектированных ключей")
+	getEnv := addEnvFlag(fs)
+	_ = fs.Parse(rest)
+	proj, _ := resolveServiceProj(service, fs, getEnv())
+
+	st, _, _, err := store.Open(false)
+	if err != nil {
+		die("%v", err)
+	}
+	keys := st.EffectiveKeys(proj) // собственные + унаследованные, ссылки разрешены
+	if len(keys) == 0 {
+		die("проект %q пуст или не существует (sec ls)", proj)
+	}
+
+	extra := selectKeys(keys, only, proj)
+	if verbose {
+		fmt.Fprintf(os.Stderr, "[%s → env += %s]\n", proj, strings.Join(store.SortedKeys(extra), ", "))
+	}
+
+	path, err := exec.LookPath(tail[0])
+	if err != nil {
+		die("команда не найдена: %s", tail[0])
+	}
+	audit.Record("run", proj, fmt.Sprintf("env += %s → %s", strings.Join(store.SortedKeys(extra), ","), tail[0]))
+	if err := syscall.Exec(path, tail, mergedEnv(extra)); err != nil {
+		die("exec %s: %v", tail[0], err)
+	}
+	return 0 // недостижимо
+}
+
+// mergedEnv накладывает extra поверх текущего окружения без дублей
+// (при дублях в envp что подхватится — не определено).
+func mergedEnv(extra map[string]string) []string {
+	seen := map[string]int{}
+	var out []string
+	for _, kv := range os.Environ() {
+		k, _, _ := strings.Cut(kv, "=")
+		if idx, ok := seen[k]; ok {
+			out[idx] = kv
+		} else {
+			seen[k] = len(out)
+			out = append(out, kv)
+		}
+	}
+	for _, k := range store.SortedKeys(extra) {
+		kv := k + "=" + extra[k]
+		if idx, ok := seen[k]; ok {
+			out[idx] = kv
+		} else {
+			seen[k] = len(out)
+			out = append(out, kv)
+		}
+	}
+	return out
+}
+
+func exportCommand(args []string) int {
+	service, rest := splitArgs(args)
+	fs := flag.NewFlagSet("export", flag.ExitOnError)
+	var file string
+	fs.StringVar(&file, "file", "", "путь к .env-файлу (обязателен)")
+	getEnv := addEnvFlag(fs)
+	_ = fs.Parse(rest)
+	proj, _ := resolveServiceProj(service, fs, getEnv())
+	if file == "" {
+		die("export пишет только в файл (защита от утечки в вывод): sec export %s --file .env", proj)
+	}
+
+	st, _, _, err := store.Open(false)
+	if err != nil {
+		die("%v", err)
+	}
+	keys := st.EffectiveKeys(proj) // собственные + унаследованные, ссылки разрешены
+	if len(keys) == 0 {
+		die("проект %q пуст или не существует (sec ls)", proj)
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "# сгенерировано sec из проекта %s — не коммитить\n", proj)
+	names := store.SortedKeys(keys)
+	for _, k := range names {
+		b.WriteString(dotenv.Line(k, keys[k].Value) + "\n")
+	}
+	if err := os.WriteFile(file, []byte(b.String()), 0o600); err != nil {
+		die("запись %s: %v", file, err)
+	}
+	audit.Record("export", proj, "→ "+file)
+	fmt.Printf("записан %s (0600): %s\n", file, strings.Join(names, ", "))
+	return 0
+}
+
+func importCommand(args []string) int {
+	service, rest := splitArgs(args)
+	fs := flag.NewFlagSet("import", flag.ExitOnError)
+	var file string
+	var fromInfisical bool
+	var ienv, path, projectID, token string
+	fs.StringVar(&file, "file", ".env", "путь к .env-файлу")
+	fs.BoolVar(&fromInfisical, "from-infisical", false, "источник — Infisical (через их CLI), а не файл")
+	fs.StringVar(&ienv, "infisical-env", "", "Infisical: окружение (умолч. — значение -e, иначе dev)")
+	fs.StringVar(&path, "path", "/", "Infisical: путь к папке секретов")
+	fs.StringVar(&projectID, "projectId", "", "Infisical: id проекта (иначе из .infisical.json в текущей папке)")
+	fs.StringVar(&token, "token", "", "Infisical: сервис-токен/идентификатор (иначе текущий логин)")
+	getEnv := addEnvFlag(fs)
+	_ = fs.Parse(rest)
+	target, secEnv := resolveServiceProj(service, fs, getEnv()) // куда в sec: service либо service@env
+
+	if fromInfisical {
+		if ienv == "" { // дефолт Infisical-окружения — sec-инстанс, иначе dev
+			if ienv = secEnv; ienv == "" {
+				ienv = "dev"
+			}
+		}
+		return importFromInfisical(target, ienv, path, projectID, token)
+	}
+
+	data, err := os.ReadFile(file)
+	if err != nil {
+		die("чтение %s: %v", file, err)
+	}
+	kv, warns := dotenv.Parse(string(data))
+	for _, w := range warns {
+		fmt.Fprintf(os.Stderr, "sec: %s: %s\n", file, w)
+	}
+	if len(kv) == 0 {
+		die("в %s не нашлось ни одной пары KEY=VALUE", file)
+	}
+	writeImported(target, kv, "из "+file)
+	fmt.Fprintf(os.Stderr, "исходный файл остался на диске — удали, если больше не нужен: rm %s\n", file)
+	return 0
+}
+
+// writeImported вливает набор KEY=VALUE в проект (общее для import из .env и из
+// Infisical): существующие значения уходят в историю, новые добавляются.
+func writeImported(proj string, kv map[string]string, source string) (int, int) {
+	unlock := store.Lock()
+	defer unlock()
+	st, mkey, _, err := store.Open(true)
+	if err != nil {
+		die("%v", err)
+	}
+	keys := st.Project(proj)
+	added, updated, skipped := 0, 0, 0
+	for k, v := range kv {
+		if editBlock(st, proj, k) != "" { // ссылку/наследование не перетираем импортом
+			fmt.Fprintf(os.Stderr, "sec: %s/%s пропущен — ссылка/наследование (перебить: sec set %s/%s --override)\n", proj, k, proj, k)
+			skipped++
+			continue
+		}
+		if store.Put(keys, k, v) {
+			updated++
+		} else {
+			added++
+		}
+	}
+	if err := store.Save(st, mkey); err != nil {
+		die("запись хранилища: %v", err)
+	}
+	audit.Record("import", proj, fmt.Sprintf("%s (новых %d, обновлено %d, пропущено %d)", source, added, updated, skipped))
+	tail := ""
+	if skipped > 0 {
+		tail = fmt.Sprintf(", пропущено ссылок/наследования %d", skipped)
+	}
+	fmt.Printf("импортировано в %s: %s (новых %d, обновлено %d%s)\n",
+		proj, strings.Join(store.SortedKeys(kv), ", "), added, updated, tail)
+	return added, updated
+}
+
+// logCommand показывает журнал обращений (значений там нет — только имена).
+func logCommand(args []string) int {
+	filter, rest := splitArgs(args)
+	fs := flag.NewFlagSet("log", flag.ExitOnError)
+	var n int
+	var asJSON bool
+	fs.IntVar(&n, "n", 20, "сколько последних записей показать")
+	fs.BoolVar(&asJSON, "json", false, "машинный вывод JSON")
+	_ = fs.Parse(rest)
+	if filter == "" {
+		filter = fs.Arg(0)
+	}
+
+	entries := audit.Read()
+	if filter != "" {
+		var out []audit.Entry
+		for _, e := range entries {
+			if e.Target == filter || strings.HasPrefix(e.Target, filter+"/") ||
+				strings.HasPrefix(e.Target, filter+"@") {
+				out = append(out, e)
+			}
+		}
+		entries = out
+	}
+	if len(entries) > n {
+		entries = entries[len(entries)-n:]
+	}
+	if asJSON {
+		if entries == nil {
+			entries = []audit.Entry{}
+		}
+		data, _ := json.MarshalIndent(entries, "", "  ")
+		fmt.Println(string(data))
+		return 0
+	}
+	if len(entries) == 0 {
+		fmt.Println("журнал пуст")
+		return 0
+	}
+	for _, e := range entries {
+		line := fmt.Sprintf("%s  %-7s %-28s %-30s", fmtTime(e.TS), e.Op, e.Target, e.Detail)
+		if e.By != "" {
+			line += "← " + e.By
+		}
+		fmt.Println(strings.TrimRight(line, " "))
+	}
+	return 0
+}
+
+func infoCommand(args []string) int {
+	fs := flag.NewFlagSet("info", flag.ExitOnError)
+	var asJSON bool
+	fs.BoolVar(&asJSON, "json", false, "машинный вывод JSON")
+	_ = fs.Parse(args)
+
+	out := struct {
+		Store    string `json:"store"`
+		Size     int64  `json:"size"`
+		Backend  string `json:"backend"`
+		Audit    string `json:"audit"`
+		Error    string `json:"error,omitempty"`
+		Projects int    `json:"projects"`
+		Keys     int    `json:"keys"`
+	}{Store: store.Path(), Backend: "none", Audit: audit.Path()}
+	if fi, err := os.Stat(store.Path()); err == nil {
+		out.Size = fi.Size()
+	}
+	store, _, backend, err := store.Open(false)
+	if err != nil {
+		out.Error = err.Error()
+	} else {
+		out.Backend = backend
+		out.Projects = len(store.Projects)
+		for _, keys := range store.Projects {
+			out.Keys += len(keys)
+		}
+	}
+
+	if asJSON {
+		data, _ := json.MarshalIndent(out, "", "  ")
+		fmt.Println(string(data))
+		return 0
+	}
+	fmt.Printf("хранилище:   %s (%d байт)\n", out.Store, out.Size)
+	fmt.Printf("журнал:      %s\n", out.Audit)
+	if out.Error != "" {
+		fmt.Printf("мастер-ключ: %s\n", out.Error)
+		return 0
+	}
+	switch out.Backend {
+	case "keyring":
+		fmt.Printf("мастер-ключ: %s\n", keyring.OSName())
+	case "env":
+		fmt.Println("мастер-ключ: env SEC_KEY")
+	case "file":
+		fmt.Printf("мастер-ключ: файл %s\n", keyring.FilePath())
+	}
+	fmt.Printf("проектов:    %d, ключей: %d\n", out.Projects, out.Keys)
+	return 0
+}

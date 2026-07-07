@@ -1,0 +1,33 @@
+name: release
+
+# Тег вида v1.2.3 запускает сборку готовых бинарников (darwin/linux, amd64/arm64),
+# заливает их в GitHub Release и обновляет Homebrew-формулу в tap-репозитории.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write # создать GitHub Release с бинарниками
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # goreleaser'у нужна вся история для changelog
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: cli/go.mod
+          cache-dependency-path: cli/go.sum
+
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          # GITHUB_TOKEN хватает для самого релиза; для пуша формулы в другой
+          # репозиторий (homebrew-tap) нужен отдельный PAT в secret'ах репо.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
