@@ -1,0 +1,56 @@
+{
+  "$schema": "https://www.raycast.com/schemas/extension.json",
+  "name": "sec",
+  "title": "Sec Secrets",
+  "description": "Локальный менеджер секретов sec: поиск, копирование, добавление и генерация секретов — значения не показываются и не проходят через расширение.",
+  "icon": "icon.png",
+  "author": "kaidstor",
+  "license": "MIT",
+  "categories": ["Security"],
+  "commands": [
+    {
+      "name": "search-secrets",
+      "title": "Search Secrets",
+      "subtitle": "sec",
+      "description": "Поиск по проектам и ключам, копирование значений и TOTP в буфер без показа.",
+      "mode": "view"
+    },
+    {
+      "name": "add-secret",
+      "title": "Add Secret",
+      "subtitle": "sec",
+      "description": "Сохранить новый секрет (значение уходит в sec через stdin, не через argv).",
+      "mode": "view"
+    },
+    {
+      "name": "generate-secret",
+      "title": "Generate Secret",
+      "subtitle": "sec",
+      "description": "Сгенерировать случайное значение и сохранить, не показывая.",
+      "mode": "view"
+    }
+  ],
+  "preferences": [
+    {
+      "name": "secPath",
+      "type": "textfield",
+      "required": false,
+      "title": "Sec Binary Path",
+      "description": "Путь к бинарю sec. Пусто — автопоиск: /opt/homebrew/bin, /usr/local/bin, ~/go/bin.",
+      "placeholder": "/opt/homebrew/bin/sec"
+    }
+  ],
+  "dependencies": {
+    "@raycast/api": "^1.100.0",
+    "@raycast/utils": "^2.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.0.0",
+    "typescript": "^5.8.0"
+  },
+  "scripts": {
+    "dev": "ray develop",
+    "build": "ray build -e dist"
+  }
+}

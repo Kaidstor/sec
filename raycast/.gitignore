@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.raycast-swift-build/
+
+# ray CLI генерит свои pnpm-файлы; зависимости ведём через npm (package-lock.json)
+pnpm-lock.yaml
+pnpm-workspace.yaml
