@@ -126,3 +126,6 @@ export async function keyHistory(project: string, key: string): Promise<HistoryV
 // Валидация как в CLI (router.go), чтобы падать до вызова, с понятной ошибкой.
 export const KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 export const PROJ_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*(@[A-Za-z0-9][A-Za-z0-9._-]*)?$/;
+
+// Типы из sec set/gen/meta --kind (пустой — «без типа»).
+export const KINDS = ["", "password", "apikey", "totp", "env"];

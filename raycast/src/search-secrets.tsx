@@ -14,6 +14,7 @@ import {
   showToast,
 } from "@raycast/api";
 import { useCachedPromise } from "@raycast/utils";
+import { EditSecretForm } from "./edit-secret";
 import { HistoryVersion, SecretEntry, keyArgs, keyHistory, listSecrets, runSec } from "./sec";
 
 const KIND_COLOR: Record<string, Color> = {
@@ -126,7 +127,7 @@ function SecretItem(props: { project: string; entry: SecretEntry; onChange: () =
                 <Action
                   title="Скопировать (очистка через 60с)"
                   icon={Icon.Stopwatch}
-                  shortcut={{ modifiers: ["cmd", "shift"], key: "c" }}
+                  shortcut={{ modifiers: ["opt", "cmd"], key: "c" }}
                   onAction={() => copyValue(["--clear-after", "60s"])}
                 />
               </>
@@ -139,15 +140,21 @@ function SecretItem(props: { project: string; entry: SecretEntry; onChange: () =
             />
           </ActionPanel.Section>
           <ActionPanel.Section>
-            <Action.CopyToClipboard
-              title="Скопировать отпечаток"
-              content={entry.fingerprint}
-              shortcut={{ modifiers: ["cmd", "shift"], key: "f" }}
+            <Action.Push
+              title="Редактировать секрет"
+              icon={Icon.Pencil}
+              shortcut={Keyboard.Shortcut.Common.Edit}
+              target={<EditSecretForm project={project} entry={entry} onChange={onChange} />}
             />
             <Action.CopyToClipboard
               title="Скопировать ссылку proj/KEY"
               content={ref}
-              shortcut={{ modifiers: ["cmd", "shift"], key: "r" }}
+              shortcut={{ modifiers: ["cmd", "shift"], key: "c" }}
+            />
+            <Action.CopyToClipboard
+              title="Скопировать отпечаток"
+              content={entry.fingerprint}
+              shortcut={{ modifiers: ["cmd", "shift"], key: "f" }}
             />
             <Action.Push
               title="История версий"

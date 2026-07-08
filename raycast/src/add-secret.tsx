@@ -1,10 +1,9 @@
 import { Action, ActionPanel, Form, Icon, Toast, popToRoot, showToast } from "@raycast/api";
 import { useCachedPromise } from "@raycast/utils";
 import { useState } from "react";
-import { KEY_RE, PROJ_RE, listSecrets, runSecWithInput, splitProject } from "./sec";
+import { KEY_RE, KINDS, PROJ_RE, listSecrets, runSecWithInput, splitProject } from "./sec";
 
 const NEW_PROJECT = "__new__";
-const KINDS = ["", "password", "apikey", "totp", "env"];
 
 interface FormValues {
   project: string;
