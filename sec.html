@@ -93,6 +93,7 @@
   <p>Ставится готовым бинарём через Homebrew — Go не нужен:</p>
   <p><code>brew install kaidstor/tap/sec</code> &nbsp;·&nbsp; проверить: <code>sec version</code></p>
   <p>Из исходников (для разработки) — см. README репозитория: <code>cd cli &amp;&amp; just build</code> либо <code>just install</code>.</p>
+  <p>Автодополнение в zsh: <code>eval "$(sec completion zsh)"</code> — дополняет проекты, ключи (<span class="inline">proj/⇥</span>) и инстансы.</p>
   <p style="margin-bottom:0">Адрес секрета — <span class="inline">&lt;proj&gt;/&lt;KEY&gt;</span>. Если проект опущен, берётся имя текущей папки:
      внутри <span class="inline">~/Projects/rebrandy/whois</span> достаточно <span class="inline">sec run -- just dev</span>.</p>
 </div>

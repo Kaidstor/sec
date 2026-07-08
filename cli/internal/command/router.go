@@ -226,6 +226,7 @@ const usage = `sec — локальные секреты для проектов
   sec rekey                            ротация мастер-ключа с перешифровкой стора
   sec log [proj[/KEY]] [-n 20] [--json] журнал обращений (кто/когда/что, без значений)
   sec info [--json]                    путь к хранилищу, бэкенд ключа, статистика
+  sec completion zsh|bash|fish         скрипт автодополнения для шелла
   sec version                          версия CLI и платформа
 
 Если <proj> не указан (просто KEY или совсем пусто) — берётся имя текущей папки.
@@ -332,6 +333,10 @@ func Run(args []string) int {
 		return syncCommand(args[1:])
 	case "__clearclip": // скрытый воркер отложенной очистки буфера (get --clear-after)
 		return clearClipWorker(args[1:])
+	case "completion":
+		return completionCommand(args[1:])
+	case "__complete": // скрытый бэкенд shell-дополнения (sec completion …)
+		return completeCommand(args[1:])
 	case "log":
 		return logCommand(args[1:])
 	case "ls", "list":

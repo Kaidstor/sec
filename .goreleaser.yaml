@@ -60,5 +60,6 @@ brews:
       email: goreleaser@users.noreply.github.com
     install: |
       bin.install "sec"
+      generate_completions_from_executable(bin/"sec", "completion")
     test: |
       system "#{bin}/sec", "version"
