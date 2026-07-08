@@ -58,13 +58,13 @@ homebrew_casks:
     description: "Локальный менеджер секретов для безопасной работы с агентами (значения не попадают в argv/историю/чат)"
     binaries:
       - sec
-    # completion генерится прогоном `sec completion <shell>` при сборке релиза
+    # completion ставится при brew install прогоном `sec completion <shell>`.
+    # shell_parameter_format: cobra сам подставляет `completion <shell>` —
+    # поэтому args НЕ задаём (иначе получается задвоенное `completion completion`).
     generate_completions_from_executable:
       executable: sec
-      args:
-        - completion
       base_name: sec
-      shell_parameter_format: cobra # `sec completion bash|zsh|fish`
+      shell_parameter_format: cobra
       shells:
         - bash
         - zsh
