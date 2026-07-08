@@ -42,24 +42,40 @@ changelog:
   filters:
     exclude: ["^docs:", "^test:", "^chore:"]
 
-# Автогенерация и пуш Homebrew-формулы в tap-репозиторий. После первого релиза
-# пользователи ставят CLI так:  brew install kaidstor/tap/sec
-brews:
+# Автогенерация и пуш Homebrew-cask в tap-репозиторий. Пользователи ставят так:
+#   brew install kaidstor/tap/sec
+# Cask (а не formula): formula-ключ `brews` в goreleaser устарел, а для готового
+# бинарника Homebrew предпочитает cask. Completion ставится авто (см. ниже).
+homebrew_casks:
   - name: sec
     repository:
       owner: kaidstor
-      name: homebrew-tap # заведи публичный репо github.com/kaidstor/homebrew-tap
+      name: homebrew-tap # публичный репо github.com/kaidstor/homebrew-tap
       branch: main
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}" # PAT с правом записи в tap-репо (secret в CI)
-    directory: Formula
+    directory: Casks
     homepage: "https://github.com/kaidstor/sec"
     description: "Локальный менеджер секретов для безопасной работы с агентами (значения не попадают в argv/историю/чат)"
-    license: "MIT" # соответствует файлу LICENSE в корне репо
+    binaries:
+      - sec
+    # completion генерится прогоном `sec completion <shell>` при сборке релиза
+    generate_completions_from_executable:
+      executable: sec
+      args:
+        - completion
+      base_name: sec
+      shell_parameter_format: cobra # `sec completion bash|zsh|fish`
+      shells:
+        - bash
+        - zsh
+        - fish
     commit_author:
       name: goreleaser
       email: goreleaser@users.noreply.github.com
-    install: |
-      bin.install "sec"
-      generate_completions_from_executable(bin/"sec", "completion")
-    test: |
-      system "#{bin}/sec", "version"
+    # неподписанный бинарь: снимаем карантин, иначе Gatekeeper блокирует запуск
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/sec"]
+          end
