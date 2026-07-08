@@ -90,8 +90,9 @@
 
 <h2>Быстрый старт</h2>
 <div class="prose steps">
-  <p>CLI поставляется со скиллом; для сборки нужен только Go (единственная зависимость — <span class="inline">golang.org/x/crypto</span> для Argon2id — завендорена, сборка офлайн). Wrapper собирает бинарь при первом вызове:</p>
-  <p><code>"&lt;skill-dir&gt;/sec.sh" ls</code> &nbsp;·&nbsp; либо <code>cd cli &amp;&amp; just build</code> → <code>../bin/sec</code> &nbsp;·&nbsp; <code>just install</code> → прямой вызов <code>sec</code></p>
+  <p>Ставится готовым бинарём через Homebrew — Go не нужен:</p>
+  <p><code>brew install kaidstor/tap/sec</code> &nbsp;·&nbsp; проверить: <code>sec version</code></p>
+  <p>Из исходников (для разработки) — см. README репозитория: <code>cd cli &amp;&amp; just build</code> либо <code>just install</code>.</p>
   <p style="margin-bottom:0">Адрес секрета — <span class="inline">&lt;proj&gt;/&lt;KEY&gt;</span>. Если проект опущен, берётся имя текущей папки:
      внутри <span class="inline">~/Projects/rebrandy/whois</span> достаточно <span class="inline">sec run -- just dev</span>.</p>
 </div>

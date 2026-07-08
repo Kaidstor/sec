@@ -1,9 +1,9 @@
 _default:
     @just --list
 
-# Собрать бинарь в ../bin/sec (туда же смотрит wrapper sec.sh)
+# Собрать бинарь в cli/sec (для разработки; в .gitignore). Потребителям — brew.
 build:
-    go build -o ../bin/sec .
+    go build -o sec .
 
 # Установить в ~/go/bin (должен быть в PATH) — для прямого вызова `sec`
 install:
@@ -21,7 +21,7 @@ run *args:
 
 # Собрать бинарь с версией из git-тега (иначе version=dev)
 build-versioned:
-    go build -ldflags "-X github.com/kaidstor/sec/internal/command.version=$(git describe --tags --always --dirty 2>/dev/null || echo dev)" -o ../bin/sec .
+    go build -ldflags "-X github.com/kaidstor/sec/internal/command.version=$(git describe --tags --always --dirty 2>/dev/null || echo dev)" -o sec .
 
 # Проверить конфиг релиза (нужен goreleaser; запускается из корня репо)
 release-check:

@@ -12,12 +12,22 @@ CI: секреты не покидают машину.
 
 ## Установка
 
+**Скилл** (инструкции для агента — Claude Code, Cursor и др.) через
+[skills.sh](https://skills.sh):
+
 ```sh
-brew install kaidstor/tap/sec   # готовый бинарь, Go не нужен
+npx skills add kaidstor/sec
+```
+
+**CLI** (сам бинарь `sec`) через Homebrew — Go не нужен:
+
+```sh
+brew install kaidstor/tap/sec
 sec version
 ```
 
-Из исходников (нужен Go) — см. [`cli/README.md`](cli/README.md#из-исходников-нужен-go).
+`npx skills` ставит только `SKILL.md`; бинарь `sec` — отдельно через brew (или
+из исходников для разработки, см. [`cli/README.md`](cli/README.md#из-исходников-нужен-go)).
 
 ## Быстрый старт
 
