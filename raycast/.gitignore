@@ -2,6 +2,7 @@ node_modules/
 dist/
 .raycast-swift-build/
 
-# ray CLI генерит свои pnpm-файлы; зависимости ведём через npm (package-lock.json)
+# Лочфайл pnpm генерит ray CLI; зависимости ведём через npm (package-lock.json).
+# pnpm-workspace.yaml НЕ игнорируем: с pnpm 11 в нём живёт allowBuilds (esbuild),
+# без него ray develop/build падает с ERR_PNPM_IGNORED_BUILDS.
 pnpm-lock.yaml
-pnpm-workspace.yaml

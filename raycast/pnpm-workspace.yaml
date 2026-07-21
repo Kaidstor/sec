@@ -1,0 +1,4 @@
+# pnpm 11 (его использует ray CLI под капотом): каким пакетам разрешены install-скрипты.
+# esbuild ставит нативный бинарник в postinstall — без него ray build/develop не работают.
+allowBuilds:
+  esbuild: true
