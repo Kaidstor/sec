@@ -39,7 +39,7 @@ sec run -- just dev
 sec set whois/API_TOKEN --clipboard --clear
 
 # затащить существующий .env в хранилище
-sec import whois --file .env
+sec import whois path/to/.env
 
 # безопасно показать вывод команды, в котором может быть секрет
 just dev 2>&1 | sec redact       # значения → [redacted:proj/KEY]

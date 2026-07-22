@@ -422,21 +422,56 @@ func exportCommand(args []string) int {
 	return 0
 }
 
+// looksLikePath — позиционный аргумент import похож на путь к файлу, а не на
+// имя проекта: слэш, ведущая точка/тильда, либо такой файл реально есть рядом
+// (`sec import prod.env` — имя проекта тоже валидное, решает наличие файла).
+func looksLikePath(arg string) bool {
+	if arg == "" {
+		return false
+	}
+	if strings.ContainsAny(arg, "/\\") || strings.HasPrefix(arg, ".") || strings.HasPrefix(arg, "~") {
+		return true
+	}
+	fi, err := os.Stat(arg)
+	return err == nil && !fi.IsDir()
+}
+
 func importCommand(args []string) int {
-	service, rest := splitArgs(args)
 	fs := flag.NewFlagSet("import", flag.ExitOnError)
 	var file string
 	var fromInfisical bool
 	var ienv, path, projectID, token string
-	fs.StringVar(&file, "file", ".env", "путь к .env-файлу")
+	fs.StringVar(&file, "file", "", "путь к .env-файлу (умолч. .env; можно и позиционно: sec import path/to/.env)")
 	fs.BoolVar(&fromInfisical, "from-infisical", false, "источник — Infisical (через их CLI), а не файл")
 	fs.StringVar(&ienv, "infisical-env", "", "Infisical: окружение (умолч. — значение -e, иначе dev)")
 	fs.StringVar(&path, "path", "/", "Infisical: путь к папке секретов")
 	fs.StringVar(&projectID, "projectId", "", "Infisical: id проекта (иначе из .infisical.json в текущей папке)")
 	fs.StringVar(&token, "token", "", "Infisical: сервис-токен/идентификатор (иначе текущий логин)")
 	getEnv := addEnvFlag(fs)
-	_ = fs.Parse(rest)
-	target, secEnv := resolveServiceProj(service, fs, getEnv()) // куда в sec: service либо service@env
+
+	// позиционные: [proj] и/или путь к файлу, в любом порядке
+	var service string
+	for _, a := range collectPositionals(fs, args) {
+		switch {
+		case looksLikePath(a):
+			if file != "" {
+				die("файл указан дважды: %s и %s", file, a)
+			}
+			file = a
+		case service == "":
+			service = a
+		default:
+			die("лишний аргумент %q: sec import [proj] [path/to/.env]", a)
+		}
+	}
+	if file == "" {
+		file = ".env"
+	}
+	if service == "" {
+		service = cwdProject()
+	}
+	secEnv := resolvedEnv(getEnv(), service)
+	target := resolveProj(service, secEnv) // куда в sec: service либо service@env
 
 	if fromInfisical {
 		if ienv == "" { // дефолт Infisical-окружения — sec-инстанс, иначе dev
