@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -422,6 +423,11 @@ func exportCommand(args []string) int {
 	return 0
 }
 
+// looksLikeJSON — позиционный аргумент import это сам JSON, а не путь/проект.
+func looksLikeJSON(arg string) bool {
+	return strings.HasPrefix(strings.TrimLeft(arg, " \t\r\n\ufeff"), "{")
+}
+
 // looksLikePath — позиционный аргумент import похож на путь к файлу, а не на
 // имя проекта: слэш, ведущая точка/тильда, либо такой файл реально есть рядом
 // (`sec import prod.env` — имя проекта тоже валидное, решает наличие файла).
@@ -438,10 +444,12 @@ func looksLikePath(arg string) bool {
 
 func importCommand(args []string) int {
 	fs := flag.NewFlagSet("import", flag.ExitOnError)
-	var file string
-	var fromInfisical bool
+	var file, inline string
+	var fromInfisical, fromJSON, fromClipboard bool
 	var ienv, path, projectID, token string
-	fs.StringVar(&file, "file", "", "путь к .env-файлу (умолч. .env; можно и позиционно: sec import path/to/.env)")
+	fs.StringVar(&file, "file", "", "путь к файлу .env или JSON (умолч. .env; можно позиционно, '-' — stdin)")
+	fs.BoolVar(&fromJSON, "from-json", false, "разбирать источник как JSON, не угадывая формат")
+	fs.BoolVar(&fromClipboard, "clipboard", false, "источник — буфер обмена (.env или JSON)")
 	fs.BoolVar(&fromInfisical, "from-infisical", false, "источник — Infisical (через их CLI), а не файл")
 	fs.StringVar(&ienv, "infisical-env", "", "Infisical: окружение (умолч. — значение -e, иначе dev)")
 	fs.StringVar(&path, "path", "/", "Infisical: путь к папке секретов")
@@ -449,11 +457,16 @@ func importCommand(args []string) int {
 	fs.StringVar(&token, "token", "", "Infisical: сервис-токен/идентификатор (иначе текущий логин)")
 	getEnv := addEnvFlag(fs)
 
-	// позиционные: [proj] и/или путь к файлу, в любом порядке
+	// позиционные: [proj] и/или источник (путь, "-" или сам JSON), в любом порядке
 	var service string
 	for _, a := range collectPositionals(fs, args) {
 		switch {
-		case looksLikePath(a):
+		case looksLikeJSON(a):
+			if inline != "" {
+				die("JSON передан дважды")
+			}
+			inline = a
+		case a == "-" || looksLikePath(a):
 			if file != "" {
 				die("файл указан дважды: %s и %s", file, a)
 			}
@@ -461,11 +474,17 @@ func importCommand(args []string) int {
 		case service == "":
 			service = a
 		default:
-			die("лишний аргумент %q: sec import [proj] [path/to/.env]", a)
+			die(`лишний аргумент %q: sec import [proj] [path/to/.env | - | '{"KEY":"…"}']`, a)
 		}
 	}
-	if file == "" {
-		file = ".env"
+	sources := 0
+	for _, given := range []bool{inline != "", file != "", fromClipboard} {
+		if given {
+			sources++
+		}
+	}
+	if sources > 1 {
+		die("источник указан несколько раз — выбери одно: файл, stdin, --clipboard или JSON аргументом")
 	}
 	if service == "" {
 		service = cwdProject()
@@ -482,20 +501,68 @@ func importCommand(args []string) int {
 		return importFromInfisical(target, ienv, path, projectID, token)
 	}
 
-	data, err := os.ReadFile(file)
-	if err != nil {
-		die("чтение %s: %v", file, err)
-	}
-	kv, warns := dotenv.Parse(string(data))
+	data, label, path := importSource(inline, file, fromClipboard, service)
+	kv, warns := parseImport(data, fromJSON)
 	for _, w := range warns {
-		fmt.Fprintf(os.Stderr, "sec: %s: %s\n", file, w)
+		fmt.Fprintf(os.Stderr, "sec: %s: %s\n", label, w)
 	}
 	if len(kv) == 0 {
-		die("в %s не нашлось ни одной пары KEY=VALUE", file)
+		die("в %s не нашлось ни одной пары KEY=VALUE", label)
 	}
-	writeImported(target, kv, "из "+file)
-	fmt.Fprintf(os.Stderr, "исходный файл остался на диске — удали, если больше не нужен: rm %s\n", file)
+	writeImported(target, kv, "из "+label)
+	if path != "" {
+		fmt.Fprintf(os.Stderr, "исходный файл остался на диске — удали, если больше не нужен: rm %s\n", path)
+	}
 	return 0
+}
+
+// importSource достаёт текст источника и его подпись для сообщений: JSON из
+// аргумента, буфер обмена, stdin (явный "-" или пайп) либо файл (умолч. .env).
+// Третий результат — путь к файлу, если источником был файл (иначе "").
+func importSource(inline, file string, fromClipboard bool, service string) (data, label, path string) {
+	switch {
+	case inline != "":
+		fmt.Fprintf(os.Stderr, "sec: JSON пришёл аргументом — значения осели в истории shell и видны в ps;\n"+
+			"    безопаснее пайпом: cat creds.json | sec import %s\n", service)
+		return inline, "аргумента", ""
+	case fromClipboard:
+		s, err := clipboardRead()
+		if err != nil {
+			die("буфер обмена: %v", err)
+		}
+		if strings.TrimSpace(s) == "" {
+			die("буфер обмена пуст")
+		}
+		return s, "буфера обмена", ""
+	case file == "-" || (file == "" && stdinPiped()):
+		b, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			die("чтение stdin: %v", err)
+		}
+		return string(b), "stdin", ""
+	default:
+		if file == "" {
+			file = ".env"
+		}
+		b, err := os.ReadFile(file)
+		if err != nil {
+			die("чтение %s: %v", file, err)
+		}
+		return string(b), file, file
+	}
+}
+
+// parseImport выбирает формат источника: JSON, если попросили явно или текст
+// начинается с '{', иначе .env-диалект.
+func parseImport(data string, forceJSON bool) (map[string]string, []string) {
+	if !forceJSON && !looksLikeJSON(data) {
+		return dotenv.Parse(data)
+	}
+	kv, warns, err := dotenv.ParseJSON(data)
+	if err != nil {
+		die("%v", err)
+	}
+	return kv, warns
 }
 
 // writeImported вливает набор KEY=VALUE в проект (общее для import из .env и из

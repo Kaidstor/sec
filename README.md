@@ -38,8 +38,9 @@ sec run -- just dev
 # завести секрет, не увидев значения (пользователь скопировал в буфер)
 sec set whois/API_TOKEN --clipboard --clear
 
-# затащить существующий .env в хранилище
+# затащить существующий .env или JSON в хранилище
 sec import whois path/to/.env
+cat creds.json | sec import whois
 
 # безопасно показать вывод команды, в котором может быть секрет
 just dev 2>&1 | sec redact       # значения → [redacted:proj/KEY]

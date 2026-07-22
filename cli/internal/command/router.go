@@ -213,7 +213,8 @@ const usage = `sec — локальные секреты для проектов
   sec rm <proj> --all                  удалить проект целиком
   sec run [proj] [--only A,B] -- cmd   запустить cmd с env из проекта
   sec export [proj] --file .env        записать .env (только в файл)
-  sec import [proj] [path/to/.env]     импортировать ключи из .env (умолч. ./.env)
+  sec import [proj] [path/to/.env|-]   импортировать ключи из .env (умолч. ./.env)
+  sec import [proj] '{"KEY":"…"}'      импортировать из JSON (файл, stdin, буфер, аргумент)
   sec import [proj] --from-infisical   импортировать из Infisical (их CLI)
   sec push [proj] --to-infisical       отправить ключи проекта в Infisical
   sec check [proj] [--file .sec]       проверить, что заведены ключи из манифеста

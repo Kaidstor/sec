@@ -71,7 +71,7 @@ var completionFlags = map[string][]string{
 	"extend":  {"--from", "--remove", "--parent-env", "-e", "--env"},
 	"run":     {"--only", "-v", "-e", "--env"},
 	"export":  {"--file", "-e", "--env"},
-	"import":  {"--file", "--from-infisical", "--infisical-env", "--path", "--projectId", "--token", "-e", "--env"},
+	"import":  {"--file", "--from-json", "--clipboard", "--from-infisical", "--infisical-env", "--path", "--projectId", "--token", "-e", "--env"},
 	"push":    {"--to-infisical", "--infisical-env", "--path", "--only", "-e", "--env"},
 	"check":   {"--file", "--all-envs", "-e", "--env"},
 	"scan":    {"--staged", "--min", "--history"},

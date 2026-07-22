@@ -129,6 +129,7 @@
     <div class="cmd"><code>sec run findler --only YT_TOKEN -- ./sync.sh</code><div class="d">только выбранные ключи</div></div>
     <div class="cmd"><code>sec export whois --file .env</code><div class="d">собрать .env (только в файл, 0600)</div></div>
     <div class="cmd"><code>sec import whois path/to/.env</code><div class="d">затащить существующий .env (путь позиционно или --file)</div></div>
+    <div class="cmd"><code>cat creds.json | sec import whois</code><div class="d">JSON или .env: файл, stdin, --clipboard; вложенное → DB_PASS</div></div>
     <div class="cmd"><code>sec render config.tpl --file config.yml</code><div class="d">шаблон {{ secret "proj/KEY" }} → файл</div></div>
   </div>
 </div>
