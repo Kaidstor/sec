@@ -201,6 +201,8 @@ const usage = `sec — локальные секреты для проектов
   sec meta <proj>/<KEY> [--note ...]   несекретные метаданные (назначение, ротация)
   sec otp <proj>/<KEY> [--clip]        TOTP-код из сохранённого seed (RFC 6238)
   sec ls [proj] [-l|--json]            список проектов / ключей (без значений)
+  sec ls [proj] --filter <шаблон>      только совпавшие имена (подстрока/glob)
+  sec find <шаблон> [-l|--json]        найти ключи по всему хранилищу → proj/KEY
   sec diff <projA> <projB>             сравнить проекты по отпечаткам (без значений)
   sec mv <proj>/<KEY> <p2>[/<KEY2>]    перенести/переименовать (без раскрытия)
   sec cp <proj>/<KEY> <p2>[/<KEY2>]    скопировать ключ (оригинал на месте)
@@ -341,6 +343,8 @@ func Run(args []string) int {
 		return logCommand(args[1:])
 	case "ls", "list":
 		return lsCommand(args[1:])
+	case "find", "search":
+		return findCommand(args[1:])
 	case "rm":
 		return rmCommand(args[1:])
 	case "run":

@@ -240,8 +240,9 @@ keys:    BOT_TOKEN, DB_PASSWORD</code></div>
 <h2>Организация и проверка</h2>
 <div class="grid">
   <div class="card">
-    <div class="head"><h3>ls / mv / cp / rm</h3></div>
+    <div class="head"><h3>ls / find / mv / cp / rm</h3></div>
     <div class="cmd"><code>sec ls [proj] [-l|--json] [-e env]</code><div class="d">сервисы → инстансы → ключи (без значений)</div></div>
+    <div class="cmd"><code>sec find token   ·   sec ls --filter git</code><div class="d">поиск по всему стору и фильтр списка: подстрока или glob</div></div>
     <div class="cmd"><code>sec mv whois/OLD whois/NEW</code><div class="d">перенос/переименование без раскрытия</div></div>
     <div class="cmd"><code>sec cp whois/KEY staging/KEY</code><div class="d">копия, оригинал на месте</div></div>
     <div class="cmd"><code>sec rm whois/KEY   ·   sec rm whois --all</code></div>

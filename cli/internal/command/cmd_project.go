@@ -1,6 +1,7 @@
 package command
 
-// Команды над проектом/стором целиком: ls / run / export / import / log / info.
+// Команды над проектом/стором целиком: ls / find / run / export / import /
+// log / info.
 
 import (
 	"github.com/kaidstor/sec/internal/audit"
@@ -21,8 +22,11 @@ func lsCommand(args []string) int {
 	service, rest := splitArgs(args)
 	fs := flag.NewFlagSet("ls", flag.ExitOnError)
 	var long, asJSON bool
+	var filter string
 	fs.BoolVar(&long, "l", false, "показать даты обновления / метаданные")
 	fs.BoolVar(&asJSON, "json", false, "машинный вывод JSON (без значений)")
+	fs.StringVar(&filter, "filter", "", "показать только совпавшие имена: подстрока без учёта регистра или glob (*_TOKEN)")
+	fs.StringVar(&filter, "f", "", "то же, что --filter (короткая форма)")
 	getEnv := addEnvFlag(fs)
 	_ = fs.Parse(rest)
 	if service == "" {
@@ -47,6 +51,14 @@ func lsCommand(args []string) int {
 		return store.SortedKeys(set)
 	}
 
+	// --filter отсекает имена того, что сейчас показываем: проекты, инстансы
+	// или ключи. Поиск по всему стору разом — отдельная команда sec find.
+	keep := func(name string) bool { return matchFilter(filter, name) }
+	nothingFound := func() int {
+		fmt.Printf("ничего не найдено по фильтру %q (искать по всему хранилищу: sec find '%s')\n", filter, filter)
+		return 0
+	}
+
 	if asJSON {
 		type keyInfo struct {
 			Key         string      `json:"key"`
@@ -57,10 +69,15 @@ func lsCommand(args []string) int {
 			Fingerprint string      `json:"fingerprint"`
 			Meta        *store.Meta `json:"meta,omitempty"`
 		}
-		build := func(proj string) []keyInfo {
+		// keyFilter пуст в списке проектов (там фильтруются их имена) и равен
+		// --filter, когда показываем ключи конкретного проекта.
+		build := func(proj, keyFilter string) []keyInfo {
 			own := st.Projects[proj]
 			out := []keyInfo{}
 			for _, k := range store.SortedKeys(own) {
+				if !matchFilter(keyFilter, k) {
+					continue
+				}
 				s := own[k]
 				info := keyInfo{Key: k, UpdatedAt: s.UpdatedAt, History: len(s.History), Meta: s.Meta}
 				val := s.Value
@@ -83,17 +100,24 @@ func lsCommand(args []string) int {
 		case service == "":
 			m := map[string][]keyInfo{}
 			for p := range st.Projects {
-				m[p] = build(p)
+				base, _ := store.BaseAndEnv(p)
+				if !keep(base) {
+					continue
+				}
+				m[p] = build(p, "")
 			}
 			v = m
 		case env == "" && len(instancesOf(service)) > 0:
 			m := map[string][]keyInfo{}
 			for _, e := range instancesOf(service) {
-				m[e] = build(store.ProjKey(service, e))
+				if !keep(e) {
+					continue
+				}
+				m[e] = build(store.ProjKey(service, e), "")
 			}
 			v = m
 		default:
-			v = build(store.ProjKey(service, env))
+			v = build(store.ProjKey(service, env), filter)
 		}
 		data, _ := json.MarshalIndent(v, "", "  ")
 		fmt.Println(string(data))
@@ -111,12 +135,20 @@ func lsCommand(args []string) int {
 			b, _ := store.BaseAndEnv(p)
 			bases[b] = struct{}{}
 		}
+		shown := 0
 		for _, b := range store.SortedKeys(bases) {
+			if !keep(b) {
+				continue
+			}
+			shown++
 			if insts := instancesOf(b); len(insts) > 0 {
 				fmt.Printf("%-24s инстансы: %s\n", b, strings.Join(insts, ", "))
 			} else {
 				fmt.Printf("%-24s %d ключ(ей)\n", b, len(st.Projects[b]))
 			}
+		}
+		if shown == 0 {
+			return nothingFound()
 		}
 		return 0
 	}
@@ -124,8 +156,16 @@ func lsCommand(args []string) int {
 	// сервис без -e и с инстансами → показать инстансы
 	if env == "" {
 		if insts := instancesOf(service); len(insts) > 0 {
+			shown := 0
 			for _, e := range insts {
+				if !keep(e) {
+					continue
+				}
+				shown++
 				fmt.Printf("%-18s -e %-14s %d ключ(ей)\n", service, e, len(st.Projects[store.ProjKey(service, e)]))
+			}
+			if shown == 0 {
+				return nothingFound()
 			}
 			return 0
 		}
@@ -148,7 +188,12 @@ func lsCommand(args []string) int {
 		}
 		fmt.Printf("наследует (read-only): %s\n", strings.Join(labels, ", "))
 	}
+	shown := 0
 	for _, k := range store.SortedKeys(eff) {
+		if !keep(k) {
+			continue
+		}
+		shown++
 		_, org, source, _ := st.Lookup(sp, k)
 		mark := ""
 		switch org {
@@ -158,30 +203,106 @@ func lsCommand(args []string) int {
 			mark = "  ⤷ " + store.RefToCLI(source)
 		}
 		if long {
-			s := eff[k]
-			h := ""
-			if n := len(s.History); n > 0 {
-				h = fmt.Sprintf("  (+%d в истории)", n)
-			}
-			tag := ""
-			if s.Meta != nil {
-				var parts []string
-				if s.Meta.Kind != "" {
-					parts = append(parts, s.Meta.Kind)
-				}
-				if s.Meta.Note != "" {
-					parts = append(parts, s.Meta.Note)
-				}
-				if due, _, ok := dueAt(s); ok && timeNowAfter(due) {
-					parts = append(parts, "ПОРА РОТИРОВАТЬ")
-				}
-				if len(parts) > 0 {
-					tag = "  — " + strings.Join(parts, ", ")
-				}
-			}
-			fmt.Printf("%-32s %s%s%s%s\n", k, fmtTime(s.UpdatedAt), h, tag, mark)
+			fmt.Printf("%-32s %s%s\n", k, keyDetails(eff[k]), mark)
 		} else {
 			fmt.Println(k + mark)
+		}
+	}
+	if shown == 0 {
+		return nothingFound()
+	}
+	return 0
+}
+
+// findCommand ищет ключи по всему хранилищу и печатает адреса совпавших
+// (значений не показывает) — чтобы не листать стор целиком в поисках нужного.
+// Шаблон: подстрока без учёта регистра либо glob (* и ?); со слэшем внутри
+// («gidcaf/*TOKEN») левая часть матчится на проект, правая — на ключ.
+func findCommand(args []string) int {
+	pat, rest := splitArgs(args)
+	fs := flag.NewFlagSet("find", flag.ExitOnError)
+	var long, asJSON bool
+	fs.BoolVar(&long, "l", false, "показать даты обновления / метаданные")
+	fs.BoolVar(&asJSON, "json", false, "машинный вывод JSON (без значений)")
+	getEnv := addEnvFlag(fs)
+	_ = fs.Parse(rest)
+	if pat == "" {
+		pat = fs.Arg(0)
+	}
+	if pat == "" {
+		die("укажи, что искать: sec find <шаблон> (подстрока или glob, напр. token, '*_URL', 'gidcaf/*')")
+	}
+	env := getEnv()
+	checkEnv(env)
+	projPat, keyPat, scoped := strings.Cut(pat, "/")
+
+	st, _, _, err := store.Open(false)
+	if err != nil {
+		die("%v", err)
+	}
+
+	type hit struct {
+		Ref       string      `json:"ref"`     // CLI-адрес: svc/KEY (+ " -e инстанс")
+		Project   string      `json:"project"` // сервис без инстанса
+		Env       string      `json:"env,omitempty"`
+		Key       string      `json:"key"`
+		Link      string      `json:"link,omitempty"` // куда указывает ключ-ссылка
+		UpdatedAt string      `json:"updatedAt"`
+		History   int         `json:"history"`
+		Meta      *store.Meta `json:"meta,omitempty"`
+	}
+	hits := []hit{}
+	for _, p := range store.SortedKeys(st.Projects) {
+		base, penv := store.BaseAndEnv(p)
+		if env != "" && penv != env {
+			continue
+		}
+		projHit := matchFilter(projPat, base)
+		if scoped && !projHit {
+			continue
+		}
+		for _, k := range store.SortedKeys(st.Projects[p]) {
+			switch {
+			case scoped: // «проект/ключ» — ключ обязан совпасть со своей частью
+				if !matchFilter(keyPat, k) {
+					continue
+				}
+			case !projHit && !matchFilter(pat, k): // иначе хватает совпадения проекта или ключа
+				continue
+			}
+			s := st.Projects[p][k]
+			h := hit{Ref: store.RefToCLI(p + "/" + k), Project: base, Env: penv, Key: k,
+				UpdatedAt: s.UpdatedAt, History: len(s.History), Meta: s.Meta}
+			if s.Ref != "" {
+				h.Link = store.RefToCLI(s.Ref)
+			}
+			hits = append(hits, h)
+		}
+	}
+
+	if len(hits) == 0 {
+		if asJSON {
+			fmt.Println("[]")
+		} else {
+			fmt.Fprintf(os.Stderr, "sec: по %q ничего не нашлось (sec ls — весь список проектов)\n", pat)
+		}
+		return 1 // как у grep: пусто — ненулевой код, удобно как условие в скрипте
+	}
+	if asJSON {
+		data, _ := json.MarshalIndent(hits, "", "  ")
+		fmt.Println(string(data))
+		return 0
+	}
+	for _, h := range hits {
+		mark := ""
+		if h.Link != "" {
+			mark = "  → " + h.Link
+		}
+		if long {
+			s := st.Projects[store.ProjKey(h.Project, h.Env)][h.Key]
+			fmt.Printf("%-40s %s%s\n", h.Ref, keyDetails(s), mark)
+		} else {
+			fmt.Println(h.Ref + mark)
 		}
 	}
 	return 0

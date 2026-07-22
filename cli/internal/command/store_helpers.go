@@ -6,6 +6,7 @@ package command
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/kaidstor/sec/internal/store"
@@ -18,6 +19,32 @@ func fmtTime(ts string) string {
 		return ts
 	}
 	return t.Format("02.01.2006 15:04")
+}
+
+// keyDetails — несекретная сводка ключа для -l (ls и find): когда обновлён,
+// сколько версий в истории, метаданные и пометка просроченной ротации.
+func keyDetails(s store.Secret) string {
+	out := fmtTime(s.UpdatedAt)
+	if n := len(s.History); n > 0 {
+		out += fmt.Sprintf("  (+%d в истории)", n)
+	}
+	if s.Meta == nil {
+		return out
+	}
+	var parts []string
+	if s.Meta.Kind != "" {
+		parts = append(parts, s.Meta.Kind)
+	}
+	if s.Meta.Note != "" {
+		parts = append(parts, s.Meta.Note)
+	}
+	if due, _, ok := dueAt(s); ok && timeNowAfter(due) {
+		parts = append(parts, "ПОРА РОТИРОВАТЬ")
+	}
+	if len(parts) > 0 {
+		out += "  — " + strings.Join(parts, ", ")
+	}
+	return out
 }
 
 // editBlock объясняет, почему ключ нельзя редактировать напрямую (ссылка или

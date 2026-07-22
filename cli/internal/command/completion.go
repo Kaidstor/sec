@@ -21,7 +21,7 @@ import (
 // __complete/__clearclip и без алиасов — только канонические имена).
 var completionSubcommands = []string{
 	"set", "gen", "get", "verify", "history", "undo", "redo", "forget",
-	"meta", "otp", "ls", "diff", "mv", "cp", "link", "unlink", "extend",
+	"meta", "otp", "ls", "find", "diff", "mv", "cp", "link", "unlink", "extend",
 	"rm", "run", "export", "import", "push", "check", "scan", "redact",
 	"render", "stale", "doctor", "backup", "restore", "sync", "rekey",
 	"log", "info", "completion", "version", "help",
@@ -32,6 +32,7 @@ var refCommandSet = map[string]bool{
 	"set": true, "gen": true, "get": true, "verify": true, "history": true,
 	"undo": true, "redo": true, "forget": true, "meta": true, "otp": true,
 	"mv": true, "cp": true, "link": true, "unlink": true, "rm": true,
+	"find": true, // шаблон поиска — тот же proj/KEY, дополняем как ссылку
 }
 
 // projCommandSet — команды, чей позиционный аргумент это проект целиком.
@@ -60,7 +61,8 @@ var completionFlags = map[string][]string{
 	"otp":     {"--clip", "-e", "--env"},
 	"verify":  {"-e", "--env"},
 	"diff":    {"-e", "--env"},
-	"ls":      {"-l", "--json", "-e", "--env"},
+	"ls":      {"-l", "--json", "--filter", "-f", "-e", "--env"},
+	"find":    {"-l", "--json", "-e", "--env"},
 	"rm":      {"--all", "-e", "--env"},
 	"mv":      {"--force", "-e", "--env"},
 	"cp":      {"--force", "-e", "--env"},
@@ -163,6 +165,8 @@ func canonicalSub(s string) string {
 		return "gen"
 	case "list":
 		return "ls"
+	case "search":
+		return "find"
 	case "move":
 		return "mv"
 	case "copy":
