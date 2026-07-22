@@ -20,14 +20,42 @@
       "title": "Add Secret",
       "subtitle": "sec",
       "description": "Сохранить новый секрет (значение уходит в sec через stdin, не через argv).",
-      "mode": "view"
+      "mode": "view",
+      "arguments": [
+        {
+          "name": "project",
+          "placeholder": "проект",
+          "type": "text",
+          "required": false
+        },
+        {
+          "name": "secretKey",
+          "placeholder": "KEY",
+          "type": "text",
+          "required": false
+        }
+      ]
     },
     {
       "name": "generate-secret",
       "title": "Generate Secret",
       "subtitle": "sec",
       "description": "Сгенерировать случайное значение и сохранить, не показывая.",
-      "mode": "view"
+      "mode": "view",
+      "arguments": [
+        {
+          "name": "project",
+          "placeholder": "проект",
+          "type": "text",
+          "required": false
+        },
+        {
+          "name": "secretKey",
+          "placeholder": "KEY",
+          "type": "text",
+          "required": false
+        }
+      ]
     }
   ],
   "preferences": [

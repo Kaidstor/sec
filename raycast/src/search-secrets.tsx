@@ -165,10 +165,16 @@ function SecretItem(props: { project: string; entry: SecretEntry; onChange: () =
           </ActionPanel.Section>
           <ActionPanel.Section>
             <Action
-              title="Добавить секрет"
+              title={`Добавить секрет в «${project}»`}
               icon={Icon.Plus}
               shortcut={Keyboard.Shortcut.Common.New}
-              onAction={() => launchCommand({ name: "add-secret", type: LaunchType.UserInitiated })}
+              onAction={() => launchCommand({ name: "add-secret", type: LaunchType.UserInitiated, context: { project } })}
+            />
+            <Action
+              title={`Сгенерировать секрет в «${project}»`}
+              icon={Icon.Bolt}
+              shortcut={{ modifiers: ["cmd", "shift"], key: "g" }}
+              onAction={() => launchCommand({ name: "generate-secret", type: LaunchType.UserInitiated, context: { project } })}
             />
             <Action
               title="Обновить список"

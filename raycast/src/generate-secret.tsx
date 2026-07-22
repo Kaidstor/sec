@@ -1,13 +1,11 @@
-import { Action, ActionPanel, Form, Icon, Toast, popToRoot, showHUD, showToast } from "@raycast/api";
+import { Action, ActionPanel, Form, Icon, LaunchProps, Toast, popToRoot, showHUD, showToast } from "@raycast/api";
 import { useCachedPromise } from "@raycast/utils";
 import { useState } from "react";
-import { KEY_RE, PROJ_RE, listSecrets, runSec, splitProject } from "./sec";
-
-const NEW_PROJECT = "__new__";
+import { ProjectField, rememberProject, useProjectPicker } from "./project-field";
+import { KEY_RE, listSecrets, runSec, splitProject } from "./sec";
 
 interface FormValues {
   project: string;
-  newProject: string;
   secretKey: string;
   length: string;
   symbols: boolean;
@@ -15,26 +13,30 @@ interface FormValues {
   note: string;
 }
 
-export default function GenerateSecret() {
+type Props = LaunchProps<{
+  arguments: { project?: string; secretKey?: string };
+  launchContext: { project?: string };
+}>;
+
+export default function GenerateSecret(props: Props) {
+  const initialProject = props.launchContext?.project?.trim() || props.arguments?.project?.trim() || undefined;
+  const initialKey = props.arguments?.secretKey?.trim();
+
   const { data, isLoading } = useCachedPromise(listSecrets, [], {
     failureToastOptions: { title: "sec ls не выполнился" },
   });
   const projects = Object.keys(data ?? {}).sort();
 
-  const [projectChoice, setProjectChoice] = useState<string>(NEW_PROJECT);
+  const picker = useProjectPicker(projects, { isLoading, initial: initialProject });
   const [keyError, setKeyError] = useState<string>();
-  const [projError, setProjError] = useState<string>();
   const [lenError, setLenError] = useState<string>();
 
   const submit = async (values: FormValues) => {
-    const project = values.project === NEW_PROJECT ? values.newProject.trim() : values.project;
+    const project = picker.submitProject(values.project);
+    if (!project) return;
     const key = values.secretKey.trim();
     const len = parseInt(values.length, 10);
 
-    if (!PROJ_RE.test(project)) {
-      setProjError("a-z, 0-9, точка, дефис, подчёркивание; инстанс через @env");
-      return;
-    }
     if (!KEY_RE.test(key)) {
       setKeyError("Имя как env-переменная: A-Z, 0-9, _");
       return;
@@ -53,6 +55,7 @@ export default function GenerateSecret() {
 
     try {
       await runSec(args);
+      await rememberProject(project);
       if (values.copy) {
         await showHUD(`✓ ${project}/${key} сгенерирован и в буфере (не показан)`);
       } else {
@@ -73,25 +76,12 @@ export default function GenerateSecret() {
         </ActionPanel>
       }
     >
-      <Form.Dropdown id="project" title="Проект" value={projectChoice} onChange={setProjectChoice}>
-        <Form.Dropdown.Item value={NEW_PROJECT} title="Новый проект…" icon={Icon.Plus} />
-        {projects.map((p) => (
-          <Form.Dropdown.Item key={p} value={p} title={p} icon={Icon.Folder} />
-        ))}
-      </Form.Dropdown>
-      {projectChoice === NEW_PROJECT && (
-        <Form.TextField
-          id="newProject"
-          title="Имя проекта"
-          placeholder="whois или some-bot@commercial"
-          error={projError}
-          onChange={() => setProjError(undefined)}
-        />
-      )}
+      <ProjectField picker={picker} />
       <Form.TextField
         id="secretKey"
         title="Ключ"
         placeholder="DB_PASSWORD"
+        defaultValue={initialKey}
         error={keyError}
         onChange={() => setKeyError(undefined)}
       />

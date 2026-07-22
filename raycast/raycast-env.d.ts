@@ -28,8 +28,18 @@ declare namespace Arguments {
   /** Arguments passed to the `search-secrets` command */
   export type SearchSecrets = {}
   /** Arguments passed to the `add-secret` command */
-  export type AddSecret = {}
+  export type AddSecret = {
+  /** проект */
+  "project": string,
+  /** KEY */
+  "secretKey": string
+}
   /** Arguments passed to the `generate-secret` command */
-  export type GenerateSecret = {}
+  export type GenerateSecret = {
+  /** проект */
+  "project": string,
+  /** KEY */
+  "secretKey": string
+}
 }
 
