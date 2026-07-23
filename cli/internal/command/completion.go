@@ -49,9 +49,9 @@ var fileCommandSet = map[string]bool{
 // completionFlags — флаги по подкомандам (подсказки для дополнения; держать
 // примерно в синхроне с флагами команд — рассинхрон не критичен, лишь косметика).
 var completionFlags = map[string][]string{
-	"set":     {"--clipboard", "--clear", "--stdin", "--note", "--kind", "--override", "-e", "--env"},
+	"set":     {"--clipboard", "--clear", "--stdin", "--from-file", "--note", "--kind", "--override", "-e", "--env"},
 	"gen":     {"--len", "--symbols", "--clip", "--note", "--kind", "-e", "--env"},
-	"get":     {"--clip", "--peek", "--fingerprint", "--once", "--prev", "--clear-after", "-e", "--env"},
+	"get":     {"--clip", "--peek", "--fingerprint", "--once", "--prev", "--clear-after", "--out", "-e", "--env"},
 	"history": {"--json", "-e", "--env"},
 	"undo":    {"-e", "--env"},
 	"redo":    {"-e", "--env"},

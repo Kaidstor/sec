@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/kaidstor/sec/internal/store"
@@ -134,11 +135,23 @@ func mustSecret(st *store.Store, proj, key string) store.Secret {
 
 // selectKeys собирает KEY→VALUE проекта: все ключи или только перечисленные в
 // only (через запятую). Отсутствие запрошенного ключа — фатально (run/push).
+// Бинарные (файловые) значения в env/Infisical не отдаются: без only — молча
+// пропускаются с предупреждением, запрошенные явно — фатально.
 func selectKeys(keys map[string]store.Secret, only, projLabel string) map[string]string {
 	out := map[string]string{}
 	if only == "" {
+		var binSkipped []string
 		for k, s := range keys {
+			if s.IsBinary() {
+				binSkipped = append(binSkipped, k)
+				continue
+			}
 			out[k] = s.Value
+		}
+		if len(binSkipped) > 0 {
+			sort.Strings(binSkipped)
+			fmt.Fprintf(os.Stderr, "sec: бинарные (файловые) ключи пропущены: %s (доставать: sec get %s/<KEY> --out <файл>)\n",
+				strings.Join(binSkipped, ", "), projLabel)
 		}
 		return out
 	}
@@ -146,6 +159,10 @@ func selectKeys(keys map[string]store.Secret, only, projLabel string) map[string
 	for _, k := range strings.Split(only, ",") {
 		k = strings.TrimSpace(k)
 		if s, ok := keys[k]; ok {
+			if s.IsBinary() {
+				die("%s/%s — бинарный (файловый) секрет, в env/Infisical не отдаётся: sec get %s/%s --out <файл>",
+					projLabel, k, projLabel, k)
+			}
 			out[k] = s.Value
 		} else {
 			missing = append(missing, k)
@@ -181,25 +198,28 @@ func splitArgs(args []string) (string, []string) {
 
 const usage = `sec — локальные секреты для проектов, безопасные для работы с агентами:
 значения не попадают в argv/историю/чат. Хранилище — файл XChaCha20-Poly1305,
-мастер-ключ — в macOS Keychain (fallback: env SEC_KEY / файл).
+мастер-ключ — в системном хранилище ОС: macOS Keychain / Linux libsecret /
+Windows Credential Manager (fallback: env SEC_KEY / файл).
 
 Использование:
   sec set <proj>/<KEY>                 сохранить (скрытый ввод, дважды)
   sec set <proj>/<KEY> --clipboard     взять значение из буфера обмена
   cat token.txt | sec set <proj>/<KEY> значение из stdin
+  sec set <proj>/<KEY> --from-file <f> сохранить файл (сертификат/ключ; бинарные — в base64)
   sec gen <proj>/<KEY> [--len 32]      сгенерировать и сохранить, не показывая
   sec get <proj>/<KEY> [--clip]        показать (или молча в буфер)
   sec get <proj>/<KEY> --peek          маска ab…yz + длина (безопасно для чата)
   sec get <proj>/<KEY> --fingerprint   отпечаток fp:… (безопасно для чата)
   sec get <proj>/<KEY> --prev 1        показать предыдущее значение
   sec get <proj>/<KEY> --once          показать и сразу удалить (одноразовая передача)
+  sec get <proj>/<KEY> --out <файл>    записать значение в файл 0600 (файловые/бинарные)
   sec verify <proj>/<KEY>              сверить переданное значение с сохранённым
   sec history <proj>/<KEY> [--json]    версии значения (маскированно, до 5, +redo)
   sec undo <proj>/<KEY>                шаг назад по истории (redo вернёт вперёд)
   sec redo <proj>/<KEY>                вернуть значение, отменённое undo
   sec forget <proj>/<KEY>              стереть историю и redo (после ротации)
   sec meta <proj>/<KEY> [--note ...]   несекретные метаданные (назначение, ротация)
-  sec otp <proj>/<KEY> [--clip]        TOTP-код из сохранённого seed (RFC 6238)
+  sec otp <proj>/<KEY> [--clip]        TOTP/HOTP-код из сохранённого seed (RFC 6238/4226)
   sec ls [proj] [-l|--json]            список проектов / ключей (без значений)
   sec ls [proj] --filter <шаблон>      только совпавшие имена (подстрока/glob)
   sec find <шаблон> [-l|--json]        найти ключи по всему хранилищу → proj/KEY
@@ -256,16 +276,18 @@ const usage = `sec — локальные секреты для проектов
 --parent-env (умолч. как у потомка).
 
 Флаги set:
-  --clipboard   взять значение из буфера обмена (pbpaste)
+  --clipboard   взять значение из буфера обмена
   --clear       очистить буфер после сохранения (вместе с --clipboard)
   --stdin       читать из stdin (включается и само, если stdin — пайп)
 
 Флаги gen: --len N (умолч. 32), --symbols (добавить спецсимволы), --clip
 
 Переменные окружения:
-  SEC_STORE       путь к хранилищу (умолч. ~/.local/share/sec/store.enc)
-  SEC_KEY         мастер-ключ hex64 — в обход Keychain (для серверов/CI)
-  SEC_KEY_FILE    путь к файлу мастер-ключа (умолч. ~/.config/sec/key)
+  SEC_STORE       путь к хранилищу (умолч. ~/.local/share/sec/store.enc,
+                  Windows: %LOCALAPPDATA%\sec\store.enc)
+  SEC_KEY         мастер-ключ hex64 — в обход системного хранилища (серверы/CI)
+  SEC_KEY_FILE    путь к файлу мастер-ключа (умолч. ~/.config/sec/key,
+                  Windows: %APPDATA%\sec\key)
   SEC_PASSPHRASE  passphrase для backup/restore без интерактива
 `
 

@@ -6,11 +6,33 @@ package command
 
 import (
 	"fmt"
+	"os"
+	"runtime"
 	"strings"
 	"time"
 
 	"github.com/kaidstor/sec/internal/store"
 )
+
+// writeFile0600 пишет секретное содержимое в файл, гарантируя права 0600 и
+// для уже существующего файла: os.WriteFile применяет mode только при
+// создании — файл с прежними 0644 остался бы читаемым всем. Права затягиваются
+// до записи содержимого. На Windows POSIX-прав нет, ошибка Chmod там не фатальна.
+func writeFile0600(path string, data []byte) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	if err := f.Chmod(0o600); err != nil && runtime.GOOS != "windows" {
+		f.Close()
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
+}
 
 // fmtTime показывает RFC3339-таймстемп в человекочитаемом локальном виде.
 func fmtTime(ts string) string {
@@ -28,18 +50,23 @@ func keyDetails(s store.Secret) string {
 	if n := len(s.History); n > 0 {
 		out += fmt.Sprintf("  (+%d в истории)", n)
 	}
-	if s.Meta == nil {
-		return out
-	}
 	var parts []string
-	if s.Meta.Kind != "" {
-		parts = append(parts, s.Meta.Kind)
+	if s.IsBinary() {
+		parts = append(parts, "бинарный файл")
 	}
-	if s.Meta.Note != "" {
-		parts = append(parts, s.Meta.Note)
-	}
-	if due, _, ok := dueAt(s); ok && timeNowAfter(due) {
-		parts = append(parts, "ПОРА РОТИРОВАТЬ")
+	if s.Meta != nil {
+		if s.Meta.Kind != "" {
+			parts = append(parts, s.Meta.Kind)
+		}
+		if s.Meta.Filename != "" {
+			parts = append(parts, s.Meta.Filename)
+		}
+		if s.Meta.Note != "" {
+			parts = append(parts, s.Meta.Note)
+		}
+		if due, _, ok := dueAt(s); ok && timeNowAfter(due) {
+			parts = append(parts, "ПОРА РОТИРОВАТЬ")
+		}
 	}
 	if len(parts) > 0 {
 		out += "  — " + strings.Join(parts, ", ")

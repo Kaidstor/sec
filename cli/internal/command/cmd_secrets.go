@@ -7,28 +7,37 @@ import (
 	"github.com/kaidstor/sec/internal/store"
 	"github.com/kaidstor/sec/internal/totp"
 
+	"bytes"
 	crand "crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"math/big"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
+
+// maxFileSecret — предел размера файлового секрета: стор целиком живёт в
+// памяти и JSON, история держит до 5 версий — большие блобы его раздуют.
+const maxFileSecret = 4 << 20
 
 func setCommand(args []string) int {
 	ref, rest := splitArgs(args)
 	fs := flag.NewFlagSet("set", flag.ExitOnError)
 	var fromClip, clearClip, fromStdin, override bool
-	var note, kind string
+	var note, kind, fromFile string
 	fs.BoolVar(&fromClip, "clipboard", false, "взять значение из буфера обмена")
 	fs.BoolVar(&clearClip, "clear", false, "очистить буфер после сохранения (с --clipboard)")
 	fs.BoolVar(&fromStdin, "stdin", false, "читать значение из stdin")
+	fs.StringVar(&fromFile, "from-file", "", "взять значение из файла как есть (сертификат/ключ; бинарные — в base64)")
 	fs.BoolVar(&override, "override", false, "перебить ссылку/наследование собственным значением")
 	fs.StringVar(&note, "note", "", "описание/назначение ключа (метаданные, без секрета)")
-	fs.StringVar(&kind, "kind", "", "тип: password|apikey|totp|env|...")
+	fs.StringVar(&kind, "kind", "", "тип: password|apikey|totp|file|env|...")
 	getEnv := addEnvFlag(fs)
 	_ = fs.Parse(rest)
 	proj, key := resolveKeyRef(ref, fs, getEnv(), "sec set <proj>/<KEY> (или просто <KEY> внутри папки проекта)")
@@ -38,10 +47,36 @@ func setCommand(args []string) int {
 		mustEditable(st0, proj, key, override)
 	}
 
-	var val string
+	var val, enc, fileName string
 	var err error
 	src := "скрытый ввод"
 	switch {
+	case fromFile != "":
+		if fromClip || fromStdin {
+			die("--from-file несовместим с --clipboard/--stdin")
+		}
+		fi, serr := os.Stat(fromFile)
+		if serr != nil {
+			die("чтение %s: %v", fromFile, serr)
+		}
+		if fi.Size() > maxFileSecret {
+			die("%s: %d байт — больше предела %d МиБ (стор целиком живёт в памяти и истории)",
+				fromFile, fi.Size(), maxFileSecret>>20)
+		}
+		data, rerr := os.ReadFile(fromFile)
+		if rerr != nil {
+			die("чтение %s: %v", fromFile, rerr)
+		}
+		if len(data) == 0 {
+			die("файл %s пуст, ничего не сохранено", fromFile)
+		}
+		fileName = filepath.Base(fromFile)
+		src = "файл " + fileName
+		if isBinaryData(data) {
+			val, enc = base64.StdEncoding.EncodeToString(data), store.EncB64
+		} else {
+			val = string(data) // текстовый файл — байты как есть, без трима
+		}
 	case fromClip:
 		src = "буфер обмена"
 		val, err = clipboardRead()
@@ -68,7 +103,9 @@ func setCommand(args []string) int {
 			die("значения не совпали, ничего не сохранено")
 		}
 	}
-	val = strings.TrimRight(val, "\r\n")
+	if fromFile == "" { // файл сохраняем байт-в-байт, остальным источникам — трим хвостового перевода строки
+		val = strings.TrimRight(val, "\r\n")
+	}
 	if val == "" {
 		die("пустое значение, ничего не сохранено")
 	}
@@ -86,8 +123,11 @@ func setCommand(args []string) int {
 			delete(keys, key)
 		}
 	}
-	existed := store.Put(keys, key, val)
+	existed := store.PutEnc(keys, key, val, enc)
 	applyMetaFlags(keys, key, note, kind)
+	if fileName != "" {
+		applyFileMeta(keys, key, fileName)
+	}
 	if err := store.Save(st, mkey); err != nil {
 		die("запись хранилища: %v", err)
 	}
@@ -96,13 +136,40 @@ func setCommand(args []string) int {
 	if existed {
 		verb = "обновлён (прежнее значение в истории — sec undo вернёт)"
 	}
-	fmt.Printf("%s/%s %s (%d символов, значение скрыто)\n", proj, key, verb, len(val))
+	size := fmt.Sprintf("%d символов", len(val))
+	if enc == store.EncB64 {
+		raw, _ := (store.Secret{Value: val, Enc: enc}).Bytes()
+		size = fmt.Sprintf("бинарный файл, %d байт → base64", len(raw))
+	}
+	fmt.Printf("%s/%s %s (%s, значение скрыто)\n", proj, key, verb, size)
 	if fromClip && clearClip {
 		if err := clipboardWrite(""); err == nil {
 			fmt.Println("буфер обмена очищен")
 		}
 	}
 	return 0
+}
+
+// isBinaryData — байты не годятся как текстовое значение (не-UTF-8 или NUL) —
+// хранить только как base64.
+func isBinaryData(data []byte) bool {
+	return !utf8.Valid(data) || bytes.IndexByte(data, 0) >= 0
+}
+
+// applyFileMeta помечает ключ файловым: имя исходного файла (для get --out в
+// каталог) и kind=file, если тип не задан явно.
+func applyFileMeta(keys map[string]store.Secret, key, fileName string) {
+	e := keys[key]
+	m := store.Meta{}
+	if e.Meta != nil {
+		m = *e.Meta
+	}
+	if m.Kind == "" {
+		m.Kind = "file"
+	}
+	m.Filename = fileName
+	e.Meta = &m
+	keys[key] = e
 }
 
 const (
@@ -186,8 +253,9 @@ func getCommand(args []string) int {
 	fs.BoolVar(&peek, "peek", false, "показать маску ab…yz и длину вместо значения")
 	fs.BoolVar(&fp, "fingerprint", false, "показать отпечаток fp:… (безопасно для чата)")
 	fs.BoolVar(&once, "once", false, "показать значение и сразу удалить ключ (одноразовая передача)")
-	var clearAfter string
+	var clearAfter, outFile string
 	fs.StringVar(&clearAfter, "clear-after", "", "с --clip: очистить буфер через интервал (напр. 20s), если не перезаписан")
+	fs.StringVar(&outFile, "out", "", "записать значение в файл 0600 (единственный способ достать бинарные)")
 	fs.IntVar(&prevN, "prev", 0, "показать N-е предыдущее значение (1 = прошлое)")
 	getEnv := addEnvFlag(fs)
 	_ = fs.Parse(rest)
@@ -204,15 +272,39 @@ func getCommand(args []string) int {
 		}
 		die("нет %s/%s (смотри: sec ls %s)", proj, key, proj)
 	}
-	val := sec.Value
+	val, enc := sec.Value, sec.Enc
 	detail := "показано"
 	if prevN > 0 {
 		if prevN > len(sec.History) {
 			die("у %s/%s в истории только %d значений (sec history %s)", proj, key, len(sec.History), ref)
 		}
-		val = sec.History[prevN-1].Value
+		val, enc = sec.History[prevN-1].Value, sec.History[prevN-1].Enc
 		detail = fmt.Sprintf("показано prev=%d", prevN)
 	}
+	if outFile != "" {
+		if once || clip || peek || fp {
+			die("--out несовместим с --once/--clip/--peek/--fingerprint")
+		}
+		raw, berr := (store.Secret{Value: val, Enc: enc}).Bytes()
+		if berr != nil {
+			die("%s/%s: %v", proj, key, berr)
+		}
+		target := outFile
+		if fi, serr := os.Stat(outFile); serr == nil && fi.IsDir() {
+			name := key // в каталог — под исходным именем файла, если оно известно
+			if sec.Meta != nil && sec.Meta.Filename != "" {
+				name = sec.Meta.Filename
+			}
+			target = filepath.Join(outFile, name)
+		}
+		if werr := writeFile0600(target, raw); werr != nil {
+			die("запись %s: %v", target, werr)
+		}
+		audit.Record("get", proj+"/"+key, strings.Replace(detail, "показано", "→ файл "+target, 1))
+		fmt.Printf("записан %s (0600, %d байт) — файл вне шифрованного стора, не коммить\n", target, len(raw))
+		return 0
+	}
+	isBin := enc == store.EncB64
 	if fp {
 		audit.Record("get", proj+"/"+key, "отпечаток")
 		fmt.Println(store.Fingerprint(mkey, val))
@@ -221,6 +313,11 @@ func getCommand(args []string) int {
 	if once {
 		if prevN > 0 {
 			die("--once несовместим с --prev")
+		}
+		if isBin {
+			die("%s/%s — бинарный (файловый) секрет, в терминал/буфер не отдаётся;\n"+
+				"    достань файлом и удали ключ вручную: sec get %s --out <файл> && sec rm %s",
+				proj, key, ref, ref)
 		}
 		if org != store.OriginOwn {
 			die("%s/%s не собственное значение (%s) — --once уничтожил бы ссылку, а значение осталось бы в родителе", proj, key, source)
@@ -237,15 +334,19 @@ func getCommand(args []string) int {
 		if refs := st2.Referrers(proj + "/" + key); len(refs) > 0 {
 			fmt.Fprintf(os.Stderr, "sec: ВНИМАНИЕ: на %s/%s ссылаются %s — после --once удаления ссылки станут битыми\n", proj, key, strings.Join(refs, ", "))
 		}
+		// буфер — до удаления: если он недоступен, ключ остаётся в сторе,
+		// иначе значение потерялось бы безвозвратно
+		if clip {
+			if err := clipboardWrite(val); err != nil {
+				die("буфер обмена: %v (ключ не удалён)", err)
+			}
+		}
 		delete(st2.Projects[proj], key)
 		st2.Prune(proj)
 		if err := store.Save(st2, mkey2); err != nil {
 			die("запись хранилища: %v", err)
 		}
 		if clip {
-			if err := clipboardWrite(val); err != nil {
-				die("буфер обмена: %v", err)
-			}
 			audit.Record("get", proj+"/"+key, "once (в буфер и удалено)")
 			fmt.Println("скопировано в буфер обмена (значение не показано)")
 		} else {
@@ -257,10 +358,18 @@ func getCommand(args []string) int {
 	}
 	if peek {
 		audit.Record("get", proj+"/"+key, strings.Replace(detail, "показано", "маска", 1))
+		if isBin {
+			raw, _ := (store.Secret{Value: val, Enc: enc}).Bytes()
+			fmt.Printf("%s (бинарный файл, %d байт — sec get %s --out <файл>)\n", store.MaskValue(val), len(raw), ref)
+			return 0
+		}
 		fmt.Printf("%s (%d символов)\n", store.MaskValue(val), len([]rune(val)))
 		return 0
 	}
 	if clip {
+		if isBin {
+			die("%s/%s — бинарный (файловый) секрет, в буфер обмена не копируется: sec get %s --out <файл>", proj, key, ref)
+		}
 		if err := clipboardWrite(val); err != nil {
 			die("буфер обмена: %v", err)
 		}
@@ -283,6 +392,9 @@ func getCommand(args []string) int {
 		audit.Record("get", proj+"/"+key, strings.Replace(detail, "показано", "в буфер", 1))
 		fmt.Println(msg)
 		return 0
+	}
+	if isBin {
+		die("%s/%s — бинарный (файловый) секрет, сырые байты в терминал не печатаются: sec get %s --out <файл>", proj, key, ref)
 	}
 	audit.Record("get", proj+"/"+key, detail)
 	fmt.Println(val)
@@ -554,8 +666,9 @@ func rmCommand(args []string) int {
 	return 0
 }
 
-// otpCommand печатает одноразовый TOTP-код из сохранённого seed. Код живёт
-// секунды, поэтому показывать его безопасно даже в чате.
+// otpCommand печатает одноразовый код из сохранённого seed: TOTP (RFC 6238)
+// или HOTP (RFC 4226, значение — otpauth://hotp-URI). Код живёт секунды /
+// одно использование, поэтому показывать его безопасно даже в чате.
 func otpCommand(args []string) int {
 	ref, rest := splitArgs(args)
 	fs := flag.NewFlagSet("otp", flag.ExitOnError)
@@ -572,6 +685,9 @@ func otpCommand(args []string) int {
 	if !ok {
 		die("нет %s/%s", proj, key)
 	}
+	if totp.IsHOTP(sec.Value) {
+		return hotpAdvance(proj, key, clip)
+	}
 	code, remain, err := totp.Code(sec.Value, time.Now())
 	if err != nil {
 		die("%s/%s: %v", proj, key, err)
@@ -585,5 +701,53 @@ func otpCommand(args []string) int {
 		return 0
 	}
 	fmt.Printf("%s  (действителен ещё %d с)\n", code, remain)
+	return 0
+}
+
+// hotpAdvance выдаёт HOTP-код и сдвигает счётчик в сторе. Счётчик одноразовый,
+// поэтому чтение, инкремент и запись идут одной операцией под блокировкой.
+// Инкремент пишется по адресу настоящего значения (у ссылки/наследования —
+// в родителе: источник счётчика один) и не трогает историю/UpdatedAt —
+// это расход кода, а не ротация секрета.
+func hotpAdvance(proj, key string, clip bool) int {
+	unlock := store.Lock()
+	defer unlock()
+	st, mkey, _, err := store.Open(false)
+	if err != nil {
+		die("%v", err)
+	}
+	sec, _, source, ok := st.Lookup(proj, key)
+	if !ok {
+		die("нет %s/%s", proj, key)
+	}
+	code, next, counter, err := totp.HOTPCode(sec.Value)
+	if err != nil {
+		die("%s/%s: %v", proj, key, err)
+	}
+	tp, tk := proj, key
+	if source != "" {
+		if p, k, good := store.SplitRef(source); good {
+			tp, tk = p, k
+		}
+	}
+	cur := st.Projects[tp][tk]
+	cur.Value = next
+	st.Projects[tp][tk] = cur
+	if err := store.Save(st, mkey); err != nil {
+		die("запись хранилища: %v", err)
+	}
+	audit.Record("otp", proj+"/"+key, fmt.Sprintf("hotp counter=%d", counter))
+	if clip {
+		cerr := clipboardWrite(code)
+		if cerr == nil {
+			fmt.Printf("HOTP-код в буфере обмена (счётчик %d использован, код одноразовый)\n", counter)
+			return 0
+		}
+		// счётчик уже сдвинут и сохранён — умереть, не показав код, значит
+		// рассинхронизировать строгий HOTP-сервер. Код одноразовый и уже
+		// потреблён локально, печать — безопасный fallback.
+		fmt.Fprintf(os.Stderr, "sec: буфер обмена недоступен (%v) — счётчик уже потрачен, печатаю код:\n", cerr)
+	}
+	fmt.Printf("%s  (HOTP, счётчик %d использован — код одноразовый)\n", code, counter)
 	return 0
 }

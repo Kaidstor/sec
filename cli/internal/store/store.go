@@ -7,14 +7,15 @@ package store
 
 import (
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
-	"syscall"
 	"time"
 
 	"golang.org/x/crypto/chacha20poly1305"
@@ -27,8 +28,13 @@ const storeMagic = "SECSTOR2"
 // maxHistory — сколько предыдущих значений ключа хранить (для get --prev / undo).
 const maxHistory = 5
 
+// EncB64 — маркер бинарного значения: Value содержит base64 сырых байт
+// (файловые секреты — сертификаты, ключи, keystore). Пустой Enc — обычный текст.
+const EncB64 = "b64"
+
 type Version struct {
 	Value     string `json:"value"`
+	Enc       string `json:"enc,omitempty"`
 	UpdatedAt string `json:"updatedAt"`
 }
 
@@ -36,7 +42,8 @@ type Version struct {
 // Живут отдельно от значения и переживают перезапись значения (set/gen/undo).
 type Meta struct {
 	Note        string `json:"note,omitempty"`
-	Kind        string `json:"kind,omitempty"`        // password | apikey | totp | env | ...
+	Kind        string `json:"kind,omitempty"`        // password | apikey | totp | file | env | ...
+	Filename    string `json:"filename,omitempty"`    // имя исходного файла (set --from-file)
 	RotateURL   string `json:"rotateUrl,omitempty"`   // где крутить секрет
 	RotateEvery string `json:"rotateEvery,omitempty"` // человекочитаемый интервал, напр. "90d"
 	ExpiresAt   string `json:"expiresAt,omitempty"`   // RFC3339, дедлайн ротации
@@ -44,11 +51,29 @@ type Meta struct {
 
 type Secret struct {
 	Value     string    `json:"value"`
+	Enc       string    `json:"enc,omitempty"` // "" — текст; EncB64 — бинарные байты в base64
 	Ref       string    `json:"ref,omitempty"` // внутренний "proj/KEY" — живая ссылка на чужое значение; своего Value нет
 	UpdatedAt string    `json:"updatedAt"`
 	History   []Version `json:"history,omitempty"` // прошлые значения, новейшее первым (для undo / get --prev)
 	RedoStack []Version `json:"redo,omitempty"`    // отменённые через undo значения, ближайшее первым (для redo)
 	Meta      *Meta     `json:"meta,omitempty"`    // несекретные метаданные (nil, если не заданы)
+}
+
+// IsBinary — значение бинарное (файловый секрет): в env/шаблон/буфер его не
+// отдать, доставать только файлом (get --out).
+func (s Secret) IsBinary() bool { return s.Enc == EncB64 }
+
+// Bytes — сырые байты значения: для бинарных — декодированный base64,
+// для текста — байты строки как есть.
+func (s Secret) Bytes() ([]byte, error) {
+	if s.Enc == EncB64 {
+		b, err := base64.StdEncoding.DecodeString(s.Value)
+		if err != nil {
+			return nil, fmt.Errorf("битый base64 бинарного значения: %w", err)
+		}
+		return b, nil
+	}
+	return []byte(s.Value), nil
 }
 
 type Store struct {
@@ -77,25 +102,32 @@ func Path() string {
 		return p
 	}
 	base := os.Getenv("XDG_DATA_HOME")
+	if base == "" && runtime.GOOS == "windows" {
+		base = os.Getenv("LOCALAPPDATA") // конвенция Windows: данные — в local AppData
+	}
 	if base == "" {
-		base = filepath.Join(os.Getenv("HOME"), ".local", "share")
+		home, _ := os.UserHomeDir()
+		base = filepath.Join(home, ".local", "share")
 	}
 	return filepath.Join(base, "sec", "store.enc")
 }
 
-// Put записывает значение ключа, утаскивая прежнее значение в историю
-// (если оно реально поменялось). Возвращает, существовал ли ключ.
-func Put(m map[string]Secret, key, val string) bool {
+// Put записывает текстовое значение ключа, утаскивая прежнее значение в
+// историю (если оно реально поменялось). Возвращает, существовал ли ключ.
+func Put(m map[string]Secret, key, val string) bool { return PutEnc(m, key, val, "") }
+
+// PutEnc — Put с явной кодировкой значения ("" — текст, EncB64 — бинарь).
+func PutEnc(m map[string]Secret, key, val, enc string) bool {
 	old, existed := m[key]
-	sec := Secret{Value: val, UpdatedAt: Now()}
+	sec := Secret{Value: val, Enc: enc, UpdatedAt: Now()}
 	if existed {
 		sec.Meta = old.Meta // метаданные описывают ключ, а не значение — переносим
-		if old.Value == val {
+		if old.Value == val && old.Enc == enc {
 			// значение не изменилось — это no-op, сохраняем историю и redo как есть.
 			sec.History = old.History
 			sec.RedoStack = old.RedoStack
 		} else {
-			sec.History = append([]Version{{old.Value, old.UpdatedAt}}, old.History...)
+			sec.History = append([]Version{{old.Value, old.Enc, old.UpdatedAt}}, old.History...)
 			if len(sec.History) > maxHistory {
 				sec.History = sec.History[:maxHistory]
 			}
@@ -118,9 +150,10 @@ func (s Secret) Undo() (Secret, bool) {
 	prev := s.History[0]
 	return Secret{
 		Value:     prev.Value,
+		Enc:       prev.Enc,
 		UpdatedAt: prev.UpdatedAt, // таймстемп версии сохраняем честным, не Now()
 		History:   append([]Version(nil), s.History[1:]...),
-		RedoStack: append([]Version{{s.Value, s.UpdatedAt}}, s.RedoStack...),
+		RedoStack: append([]Version{{s.Value, s.Enc, s.UpdatedAt}}, s.RedoStack...),
 		Meta:      s.Meta,
 	}, true
 }
@@ -132,12 +165,13 @@ func (s Secret) Redo() (Secret, bool) {
 		return s, false
 	}
 	fwd := s.RedoStack[0]
-	hist := append([]Version{{s.Value, s.UpdatedAt}}, s.History...)
+	hist := append([]Version{{s.Value, s.Enc, s.UpdatedAt}}, s.History...)
 	if len(hist) > maxHistory {
 		hist = hist[:maxHistory]
 	}
 	return Secret{
 		Value:     fwd.Value,
+		Enc:       fwd.Enc,
 		UpdatedAt: fwd.UpdatedAt,
 		History:   hist,
 		RedoStack: append([]Version(nil), s.RedoStack[1:]...),
@@ -147,7 +181,7 @@ func (s Secret) Redo() (Secret, bool) {
 
 // forget возвращает секрет без истории и redo (текущее значение и мета остаются).
 func (s Secret) Forget() Secret {
-	return Secret{Value: s.Value, UpdatedAt: s.UpdatedAt, Meta: s.Meta}
+	return Secret{Value: s.Value, Enc: s.Enc, UpdatedAt: s.UpdatedAt, Meta: s.Meta}
 }
 
 // Merge вливает src в dst: значения из src побеждают, вытесненные
@@ -158,14 +192,14 @@ func Merge(dst, src *Store) (added, updated int) {
 		dp := dst.Project(p)
 		for k, s := range keys {
 			cur, exists := dp[k]
-			if exists && cur.Value == s.Value {
+			if exists && cur.Value == s.Value && cur.Enc == s.Enc {
 				if cur.Meta == nil && s.Meta != nil {
 					cur.Meta = s.Meta
 					dp[k] = cur
 				}
 				continue
 			}
-			if Put(dp, k, s.Value) {
+			if PutEnc(dp, k, s.Value, s.Enc) {
 				updated++
 			} else {
 				added++
@@ -208,6 +242,10 @@ const (
 )
 
 const maxRefDepth = 32 // предел длины цепочки ссылок (заодно защита от циклов)
+
+// SplitRef — экспортированная форма splitRef для CLI-слоя: разобрать
+// внутренний адрес "proj/KEY" на проект и ключ.
+func SplitRef(ref string) (proj, key string, ok bool) { return splitRef(ref) }
 
 // splitRef разбирает внутренний адрес "proj/KEY" (proj может быть service@env,
 // оба конца без '/').
@@ -476,9 +514,9 @@ func Lock() func() {
 	if err != nil {
 		return func() {}
 	}
-	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_EX)
+	_ = flockLock(f)
 	return func() {
-		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = flockUnlock(f)
 		_ = f.Close()
 	}
 }

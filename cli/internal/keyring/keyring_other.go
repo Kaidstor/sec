@@ -1,12 +1,12 @@
-//go:build !darwin && !linux
+//go:build !darwin && !linux && !windows
 
 package keyring
 
-// Платформы без интеграции с системным хранилищем ключа (Windows, *BSD и пр.):
+// Платформы без интеграции с системным хранилищем ключа (*BSD и пр.):
 // мастер-ключ живёт в env SEC_KEY или файле ~/.config/sec/key (0600). Чтобы
-// подключить нативное хранилище (например Windows Credential Manager / DPAPI),
-// достаточно добавить keyring_windows.go с тегом `//go:build windows` и этими же
-// четырьмя функциями — общую логику в keyring.go трогать не нужно.
+// подключить нативное хранилище, достаточно добавить keyring_<os>.go со своим
+// build-тегом и этими же четырьмя функциями — общую логику в keyring.go
+// трогать не нужно.
 
 import "errors"
 

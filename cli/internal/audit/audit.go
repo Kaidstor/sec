@@ -4,9 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/kaidstor/sec/internal/store"
@@ -54,15 +52,6 @@ func Record(op, target, detail string) {
 	}
 	defer f.Close()
 	_, _ = f.Write(append(data, '\n'))
-}
-
-// caller — имя родительского процесса (кто дернул sec: zsh, node, claude…).
-func caller() string {
-	out, err := exec.Command("ps", "-o", "comm=", "-p", strconv.Itoa(os.Getppid())).Output()
-	if err != nil {
-		return ""
-	}
-	return filepath.Base(strings.TrimSpace(string(out)))
 }
 
 func Read() []Entry {

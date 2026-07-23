@@ -140,3 +140,83 @@ func TestEncryptDecryptRoundtrip(t *testing.T) {
 		t.Error("ожидалась ошибка на мусорных данных")
 	}
 }
+
+// Бинарные значения: Enc должен ездить вместе со значением через историю,
+// undo и redo — иначе после отката base64 показался бы как «текст» (и наоборот).
+func TestPutEncCarriesEncoding(t *testing.T) {
+	m := map[string]Secret{}
+	PutEnc(m, "K", "AAEC", EncB64) // []byte{0,1,2}
+	Put(m, "K", "plain-text")
+
+	if h := m["K"].History; len(h) != 1 || h[0].Enc != EncB64 {
+		t.Fatalf("история должна хранить enc=b64 старой версии: %+v", h)
+	}
+	if m["K"].Enc != "" {
+		t.Errorf("текущее значение текстовое, enc должен быть пуст: %q", m["K"].Enc)
+	}
+
+	// undo возвращает бинарную версию вместе с её enc
+	back, ok := m["K"].Undo()
+	if !ok || back.Enc != EncB64 || back.Value != "AAEC" {
+		t.Fatalf("undo должен вернуть бинарную версию с enc: %+v", back)
+	}
+	if len(back.RedoStack) != 1 || back.RedoStack[0].Enc != "" {
+		t.Errorf("redo-стек должен хранить текстовую версию с пустым enc: %+v", back.RedoStack)
+	}
+
+	// redo — обратно к тексту
+	fwd, ok := back.Redo()
+	if !ok || fwd.Enc != "" || fwd.Value != "plain-text" {
+		t.Fatalf("redo должен вернуть текстовую версию: %+v", fwd)
+	}
+	if len(fwd.History) != 1 || fwd.History[0].Enc != EncB64 {
+		t.Errorf("история после redo должна хранить бинарную версию: %+v", fwd.History)
+	}
+}
+
+func TestPutEncSameValueNoHistory(t *testing.T) {
+	m := map[string]Secret{}
+	PutEnc(m, "K", "AAEC", EncB64)
+	PutEnc(m, "K", "AAEC", EncB64) // no-op
+	if len(m["K"].History) != 0 {
+		t.Errorf("одинаковое значение+enc не должно плодить историю: %+v", m["K"].History)
+	}
+	// то же value, но другая кодировка — это смена значения
+	PutEnc(m, "K", "AAEC", "")
+	if len(m["K"].History) != 1 {
+		t.Errorf("смена enc при том же value — это новая версия: %+v", m["K"].History)
+	}
+}
+
+func TestSecretBytes(t *testing.T) {
+	bin := Secret{Value: "AAECAw==", Enc: EncB64}
+	raw, err := bin.Bytes()
+	if err != nil || !bytes.Equal(raw, []byte{0, 1, 2, 3}) {
+		t.Errorf("Bytes() бинарного: %v %v", raw, err)
+	}
+	txt := Secret{Value: "hello"}
+	raw, err = txt.Bytes()
+	if err != nil || string(raw) != "hello" {
+		t.Errorf("Bytes() текста: %v %v", raw, err)
+	}
+	if !bin.IsBinary() || txt.IsBinary() {
+		t.Error("IsBinary: бинарный → true, текст → false")
+	}
+	if _, err := (Secret{Value: "не base64!", Enc: EncB64}).Bytes(); err == nil {
+		t.Error("битый base64 должен вернуть ошибку")
+	}
+}
+
+func TestForgetKeepsEnc(t *testing.T) {
+	m := map[string]Secret{}
+	PutEnc(m, "K", "AAEC", EncB64)
+	Put(m, "K", "text")
+	got := m["K"].Forget()
+	if got.Enc != "" || got.Value != "text" || len(got.History) != 0 {
+		t.Errorf("forget: %+v", got)
+	}
+	PutEnc(m, "B", "AAEC", EncB64)
+	if g := m["B"].Forget(); g.Enc != EncB64 {
+		t.Errorf("forget бинарного должен сохранить enc: %+v", g)
+	}
+}

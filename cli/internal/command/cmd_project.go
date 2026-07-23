@@ -16,7 +16,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"syscall"
 )
 
 func lsCommand(args []string) int {
@@ -64,6 +63,7 @@ func lsCommand(args []string) int {
 		type keyInfo struct {
 			Key         string      `json:"key"`
 			Ref         string      `json:"ref,omitempty"` // CLI-адрес родителя, если ключ — ссылка
+			Enc         string      `json:"enc,omitempty"` // "b64" — бинарный (файловый) секрет
 			UpdatedAt   string      `json:"updatedAt"`
 			History     int         `json:"history"`
 			Chars       int         `json:"chars"`
@@ -80,7 +80,7 @@ func lsCommand(args []string) int {
 					continue
 				}
 				s := own[k]
-				info := keyInfo{Key: k, UpdatedAt: s.UpdatedAt, History: len(s.History), Meta: s.Meta}
+				info := keyInfo{Key: k, Enc: s.Enc, UpdatedAt: s.UpdatedAt, History: len(s.History), Meta: s.Meta}
 				val := s.Value
 				if s.Ref != "" { // ссылка — отпечаток/длина считаем по значению родителя
 					info.Ref = store.RefToCLI(s.Ref)
@@ -356,10 +356,11 @@ func runCommand(args []string) int {
 		die("команда не найдена: %s", tail[0])
 	}
 	audit.Record("run", proj, fmt.Sprintf("env += %s → %s", strings.Join(store.SortedKeys(extra), ","), tail[0]))
-	if err := syscall.Exec(path, tail, mergedEnv(extra)); err != nil {
+	code, err := execReplace(path, tail, mergedEnv(extra))
+	if err != nil {
 		die("exec %s: %v", tail[0], err)
 	}
-	return 0 // недостижимо
+	return code // на unix недостижимо: exec замещает процесс (см. exec_<os>.go)
 }
 
 // mergedEnv накладывает extra поверх текущего окружения без дублей
@@ -411,15 +412,27 @@ func exportCommand(args []string) int {
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "# сгенерировано sec из проекта %s — не коммитить\n", proj)
-	names := store.SortedKeys(keys)
-	for _, k := range names {
+	var written, binSkipped []string
+	for _, k := range store.SortedKeys(keys) {
+		if keys[k].IsBinary() { // бинарный файл в .env не лезет — доставать get --out
+			binSkipped = append(binSkipped, k)
+			continue
+		}
 		b.WriteString(dotenv.Line(k, keys[k].Value) + "\n")
+		written = append(written, k)
 	}
-	if err := os.WriteFile(file, []byte(b.String()), 0o600); err != nil {
+	if len(written) == 0 {
+		die("в %s только бинарные (файловые) ключи — .env не из чего собрать (sec get %s/<KEY> --out <файл>)", proj, proj)
+	}
+	if err := writeFile0600(file, []byte(b.String())); err != nil {
 		die("запись %s: %v", file, err)
 	}
+	if len(binSkipped) > 0 {
+		fmt.Fprintf(os.Stderr, "sec: бинарные (файловые) ключи в .env не пишутся, пропущены: %s (sec get %s/<KEY> --out)\n",
+			strings.Join(binSkipped, ", "), proj)
+	}
 	audit.Record("export", proj, "→ "+file)
-	fmt.Printf("записан %s (0600): %s\n", file, strings.Join(names, ", "))
+	fmt.Printf("записан %s (0600): %s\n", file, strings.Join(written, ", "))
 	return 0
 }
 

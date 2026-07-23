@@ -31,6 +31,9 @@ func lookupRef(st *store.Store, defService, env, ref string) (string, error) {
 	if !found {
 		return "", fmt.Errorf("нет секрета %s/%s", proj, key)
 	}
+	if sec.IsBinary() {
+		return "", fmt.Errorf("%s/%s — бинарный (файловый) секрет, в текстовый шаблон не подставляется (sec get --out)", proj, key)
+	}
 	return sec.Value, nil
 }
 
@@ -75,7 +78,7 @@ func renderCommand(args []string) int {
 	if err := t.Execute(&buf, nil); err != nil {
 		die("рендер: %v", err)
 	}
-	if err := os.WriteFile(file, buf.Bytes(), 0o600); err != nil {
+	if err := writeFile0600(file, buf.Bytes()); err != nil {
 		die("запись %s: %v", file, err)
 	}
 	audit.Record("render", proj, tpl+" → "+file)

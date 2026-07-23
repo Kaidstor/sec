@@ -2,9 +2,10 @@ package keyring
 
 // Мастер-ключ ищется по порядку: env SEC_KEY → системное хранилище ОС → файл.
 // Реализация системного хранилища вынесена в keyring_<os>.go (build-tagged):
-// macOS Keychain (`security`), Linux libsecret (`secret-tool`), прочие ОС — заглушка
-// (падаем на файл). Добавить бэкенд под новую ОС (Windows и пр.) — отдельный файл
-// keyring_<os>.go с четырьмя функциями osKeyring*, общую логику трогать не нужно.
+// macOS Keychain (`security`), Linux libsecret (`secret-tool`), Windows
+// Credential Manager (advapi32), прочие ОС — заглушка (падаем на файл).
+// Добавить бэкенд под новую ОС — отдельный файл keyring_<os>.go с четырьмя
+// функциями osKeyring*, общую логику трогать не нужно.
 
 import (
 	"crypto/rand"
@@ -13,6 +14,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -41,8 +43,12 @@ func FilePath() string {
 		return p
 	}
 	base := os.Getenv("XDG_CONFIG_HOME")
+	if base == "" && runtime.GOOS == "windows" {
+		base = os.Getenv("APPDATA") // конвенция Windows: конфиг — в roaming AppData
+	}
 	if base == "" {
-		base = filepath.Join(os.Getenv("HOME"), ".config")
+		home, _ := os.UserHomeDir()
+		base = filepath.Join(home, ".config")
 	}
 	return filepath.Join(base, "sec", "key")
 }

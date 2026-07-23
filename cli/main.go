@@ -1,6 +1,7 @@
 // sec — локальные секреты для проектов, сделан под безопасную работу с
 // агентами: значения не появляются в argv/истории/чате. Хранилище — один файл
-// XChaCha20-Poly1305, мастер-ключ — в macOS Keychain (fallback: env / файл).
+// XChaCha20-Poly1305, мастер-ключ — в системном хранилище ОС: macOS Keychain /
+// Linux libsecret / Windows Credential Manager (fallback: env / файл).
 //
 // Точка входа тонкая: вся логика — в пакетах internal/. Карта:
 //

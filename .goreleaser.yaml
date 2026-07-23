@@ -17,8 +17,8 @@ builds:
     main: .
     binary: sec
     env:
-      - CGO_ENABLED=0 # бэкенды keyring дергают `security`/`secret-tool` через exec, cgo не нужен → статический бинарь
-    goos: [darwin, linux]
+      - CGO_ENABLED=0 # бэкенды keyring: exec security/secret-tool либо чистый syscall (advapi32), cgo не нужен → статический бинарь
+    goos: [darwin, linux, windows]
     goarch: [amd64, arm64]
     flags:
       - -trimpath
@@ -32,6 +32,9 @@ archives:
   - id: sec
     formats: [tar.gz] # goreleaser < v2.4 использует `format: tar.gz` (единственное число)
     name_template: "sec_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        formats: [zip]
 
 checksum:
   name_template: "checksums.txt"

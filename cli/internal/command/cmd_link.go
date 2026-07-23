@@ -97,7 +97,7 @@ func unlinkCommand(args []string) int {
 	if !resolved {
 		die("ссылка %s/%s → %s битая; удалить ключ: sec unlink %s --drop", proj, key, own.Ref, ref)
 	}
-	st.Project(proj)[key] = store.Secret{Value: sec.Value, UpdatedAt: store.Now(), Meta: own.Meta}
+	st.Project(proj)[key] = store.Secret{Value: sec.Value, Enc: sec.Enc, UpdatedAt: store.Now(), Meta: own.Meta}
 	if err := store.Save(st, mkey); err != nil {
 		die("запись хранилища: %v", err)
 	}

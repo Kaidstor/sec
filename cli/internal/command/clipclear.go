@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
-	"syscall"
 	"time"
 )
 
@@ -22,7 +21,7 @@ func spawnClipboardClear(val string, seconds int) error {
 		return err
 	}
 	cmd := exec.Command(self, "__clearclip", strconv.Itoa(seconds))
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true} // переживёт выход родителя
+	cmd.SysProcAttr = detachSysProcAttr() // переживёт выход родителя (см. clipclear_<os>.go)
 	cmd.Stdout, cmd.Stderr = nil, nil
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
