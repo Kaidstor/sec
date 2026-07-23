@@ -13,7 +13,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -320,14 +319,13 @@ func doctorCommand(args []string) int {
 	}
 	okline := func(format string, a ...any) { fmt.Printf("  ✓ "+format+"\n", a...) }
 
-	// права файла хранилища (на Windows Unix-права не работают — там NTFS ACL)
+	// права файла хранилища: unix — POSIX 0600, Windows — DACL без широких групп
+	// (реализации — perms_unix.go / perms_windows.go)
 	if fi, err := os.Stat(store.Path()); err == nil {
-		if runtime.GOOS == "windows" {
-			okline("права хранилища: NTFS ACL профиля пользователя (chmod неприменим)")
-		} else if perm := fi.Mode().Perm(); perm != 0o600 {
-			warn("права хранилища %o, ожидались 600: chmod 600 %s", perm, store.Path())
+		if msg, ok := storePermsStatus(store.Path(), fi); ok {
+			okline("%s", msg)
 		} else {
-			okline("права хранилища 600")
+			warn("%s", msg)
 		}
 	}
 

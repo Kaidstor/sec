@@ -1,6 +1,7 @@
 package command
 
 import (
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -49,5 +50,60 @@ func TestWriteFile0600TightensExisting(t *testing.T) {
 	b, _ := os.ReadFile(p)
 	if string(b) != "секрет" {
 		t.Errorf("содержимое %q", b)
+	}
+}
+
+// Meta.Filename мог приехать из чужого стора (sync/restore) с разделителями
+// любой ОС — в путь get --out он входит только простым именем, без traversal.
+func TestSafeBaseName(t *testing.T) {
+	cases := map[string]string{
+		"server.p12":                 "server.p12",
+		"../../.ssh/authorized_keys": "authorized_keys",
+		`..\..\AppData\evil.exe`:     "evil.exe",
+		`mixed/..\odd/name.txt`:      "name.txt",
+		"..":                         "",
+		".":                          "",
+		"":                           "",
+		"dir/":                       "",
+	}
+	for in, want := range cases {
+		if got := safeBaseName(in); got != want {
+			t.Errorf("safeBaseName(%q) = %q, ожидалось %q", in, got, want)
+		}
+	}
+}
+
+func TestDecodedB64Len(t *testing.T) {
+	for n := 0; n <= 12; n++ {
+		enc := base64.StdEncoding.EncodeToString(make([]byte, n))
+		if got := decodedB64Len(enc); got != n {
+			t.Errorf("decodedB64Len(len=%d) = %d, ожидалось %d", len(enc), got, n)
+		}
+	}
+}
+
+// Перезапись файлового секрета текстом обязана снять файловую метку: иначе
+// get --out положит новый токен под именем старого сертификата.
+func TestClearFileMeta(t *testing.T) {
+	keys := map[string]store.Secret{
+		"A": {Value: "v", Meta: &store.Meta{Kind: "file", Filename: "a.p12"}},
+		"B": {Value: "v", Meta: &store.Meta{Kind: "file", Filename: "b.pem", Note: "note"}},
+		"C": {Value: "v", Meta: &store.Meta{Kind: "password", Filename: "odd"}},
+		"D": {Value: "v"},
+	}
+	for k := range keys {
+		clearFileMeta(keys, k)
+	}
+	if keys["A"].Meta != nil {
+		t.Errorf("A: метаданные из одной файловой метки должны исчезнуть: %+v", keys["A"].Meta)
+	}
+	if m := keys["B"].Meta; m == nil || m.Filename != "" || m.Kind != "" || m.Note != "note" {
+		t.Errorf("B: note должен остаться, файловая метка — нет: %+v", m)
+	}
+	if m := keys["C"].Meta; m == nil || m.Kind != "password" || m.Filename != "" {
+		t.Errorf("C: пользовательский kind должен остаться: %+v", m)
+	}
+	if keys["D"].Meta != nil {
+		t.Errorf("D: без метаданных — no-op")
 	}
 }

@@ -11,22 +11,54 @@ package command
 // org.nspasteboard.ConcealedType на macOS).
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
 
+// stdinPiped — в stdin действительно подали данные пайпом/редиректом.
+// Интерактивный stdin в Git Bash / mintty — это именованный пайп MSYS-pty,
+// а не char device: считать его пайпом нельзя, иначе set/verify уйдут в
+// io.ReadAll(os.Stdin) и набранный секрет отобразится на экране открытым текстом.
+func stdinPiped() bool {
+	st, err := os.Stdin.Stat()
+	if err != nil || st.Mode()&os.ModeCharDevice != 0 {
+		return false
+	}
+	return !isMsysPty(windows.Handle(os.Stdin.Fd()))
+}
+
+// isMsysPty — хэндл является интерактивным pty MSYS/Cygwin (mintty): именованный
+// пайп вида \msys-XXXX-ptyN-from-master / \cygwin-XXXX-ptyN-…
+func isMsysPty(h windows.Handle) bool {
+	if t, err := windows.GetFileType(h); err != nil || t != windows.FILE_TYPE_PIPE {
+		return false
+	}
+	var buf [1024]byte // FILE_NAME_INFO: DWORD FileNameLength + WCHAR FileName[]
+	if err := windows.GetFileInformationByHandleEx(h, windows.FileNameInfo, &buf[0], uint32(len(buf))); err != nil {
+		return false
+	}
+	n := binary.LittleEndian.Uint32(buf[0:4])
+	if n > uint32(len(buf)-4) {
+		n = uint32(len(buf) - 4)
+	}
+	name := strings.ToLower(windows.UTF16ToString(unsafe.Slice((*uint16)(unsafe.Pointer(&buf[4])), n/2)))
+	return (strings.Contains(name, `\msys-`) || strings.Contains(name, `\cygwin-`)) && strings.Contains(name, "-pty")
+}
+
 // readHidden читает строку с консоли (CONIN$) с выключенным echo. Echo
 // восстанавливается и по Ctrl-C.
 func readHidden(prompt string) (string, error) {
 	conin, err := os.OpenFile("CONIN$", os.O_RDWR, 0)
 	if err != nil {
-		return "", errors.New("нет консоли для скрытого ввода — подай значение через stdin или --clipboard")
+		return "", errors.New("нет консоли для скрытого ввода (Git Bash/mintty: запусти через winpty sec …) — либо подай значение через stdin или --clipboard")
 	}
 	defer conin.Close()
 	out := os.Stderr
@@ -142,21 +174,25 @@ func clipboardWrite(s string) error {
 	if err != nil {
 		return err
 	}
-	if err := setClipboardBytes(cfUnicodeText,
-		unsafe.Slice((*byte)(unsafe.Pointer(&u16[0])), len(u16)*2)); err != nil {
-		return err
-	}
+	// метки исключения — строго ДО секрета: если хоть одна не встала, секрет в
+	// буфер не кладём вовсе (иначе он утёк бы в историю Win+V и облачную
+	// синхронизацию, а команда отчиталась бы об успехе). Буфер уже очищен.
 	for _, name := range []string{
 		"ExcludeClipboardContentFromMonitorProcessing",
 		"CanIncludeInClipboardHistory",
 		"CanUploadToCloudClipboard",
 	} {
-		if id := registerFormat(name); id != 0 {
-			var zero [4]byte // DWORD 0 — «нельзя»
-			_ = setClipboardBytes(id, zero[:])
+		id := registerFormat(name)
+		if id == 0 {
+			return fmt.Errorf("формат %s не зарегистрирован — без защиты от истории Win+V секрет в буфер не кладу", name)
+		}
+		var zero [4]byte // DWORD 0 — «нельзя»
+		if err := setClipboardBytes(id, zero[:]); err != nil {
+			return fmt.Errorf("метка %s: %w — без защиты от истории Win+V секрет в буфер не кладу", name, err)
 		}
 	}
-	return nil
+	return setClipboardBytes(cfUnicodeText,
+		unsafe.Slice((*byte)(unsafe.Pointer(&u16[0])), len(u16)*2))
 }
 
 func registerFormat(name string) uintptr {

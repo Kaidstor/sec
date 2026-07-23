@@ -121,3 +121,36 @@ func TestHOTPCounterValidation(t *testing.T) {
 		t.Errorf("TOTP не должен требовать counter: %v", err)
 	}
 }
+
+// QR-коды в алфанумерик-режиме отдают URI целиком в верхнем регистре — разбор
+// (префикс, имена query-параметров) обязан быть регистронезависимым, как IsHOTP.
+func TestUppercaseURIs(t *testing.T) {
+	seed := "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
+
+	lo, _, _, err := HOTPCode("otpauth://hotp/x?secret=" + seed + "&counter=5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	up, next, counter, err := HOTPCode("OTPAUTH://HOTP/X?SECRET=" + seed + "&COUNTER=5")
+	if err != nil {
+		t.Fatalf("верхнерегистровый HOTP-URI: %v", err)
+	}
+	if up != lo || counter != 5 {
+		t.Errorf("code=%s counter=%d, ожидались %s/5", up, counter, lo)
+	}
+	if !strings.Contains(next, "counter=6") || strings.Contains(next, "COUNTER=") {
+		t.Errorf("next должен содержать единственный counter=6: %s", next)
+	}
+
+	tlo, _, err := Code("otpauth://totp/x?secret="+seed, time.Unix(59, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tup, _, err := Code("OTPAUTH://TOTP/X?SECRET="+seed, time.Unix(59, 0))
+	if err != nil {
+		t.Fatalf("верхнерегистровый TOTP-URI: %v", err)
+	}
+	if tup != tlo {
+		t.Errorf("TOTP: %s != %s", tup, tlo)
+	}
+}

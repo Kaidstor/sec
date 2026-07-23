@@ -25,6 +25,12 @@ import (
 
 const storeMagic = "SECSTOR2"
 
+// storeVersion — версия схемы стора. Save всегда пишет текущую, Open
+// отказывается открывать более новую: бинарь, не знающий свежих полей
+// (например enc у бинарных секретов), молча уничтожил бы их при записи.
+// Версия 2 — появилось поле Secret.Enc (бинарные файловые секреты).
+const storeVersion = 2
+
 // maxHistory — сколько предыдущих значений ключа хранить (для get --prev / undo).
 const maxHistory = 5
 
@@ -481,7 +487,7 @@ func Open(create bool) (*Store, []byte, string, error) {
 	if err != nil {
 		return nil, nil, "", err
 	}
-	st := &Store{Version: 1, Projects: map[string]map[string]Secret{}}
+	st := &Store{Version: storeVersion, Projects: map[string]map[string]Secret{}}
 	data, err := os.ReadFile(Path())
 	if errors.Is(err, os.ErrNotExist) {
 		return st, key, backend, nil
@@ -495,6 +501,9 @@ func Open(create bool) (*Store, []byte, string, error) {
 	}
 	if err := json.Unmarshal(pt, st); err != nil {
 		return nil, nil, "", fmt.Errorf("хранилище повреждено: %w", err)
+	}
+	if st.Version > storeVersion {
+		return nil, nil, "", fmt.Errorf("хранилище версии %d, эта сборка sec понимает только ≤ %d — обнови sec (запись старой версией уничтожила бы новые поля)", st.Version, storeVersion)
 	}
 	if st.Projects == nil {
 		st.Projects = map[string]map[string]Secret{}
@@ -522,6 +531,7 @@ func Lock() func() {
 }
 
 func Save(st *Store, key []byte) error {
+	st.Version = storeVersion
 	pt, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {
 		return err

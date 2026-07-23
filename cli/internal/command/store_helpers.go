@@ -17,13 +17,19 @@ import (
 // writeFile0600 пишет секретное содержимое в файл, гарантируя права 0600 и
 // для уже существующего файла: os.WriteFile применяет mode только при
 // создании — файл с прежними 0644 остался бы читаемым всем. Права затягиваются
-// до записи содержимого. На Windows POSIX-прав нет, ошибка Chmod там не фатальна.
+// до усечения и записи: если Chmod невозможен (чужая группа, vfat/NFS), старое
+// содержимое остаётся целым — O_TRUNC при открытии уничтожил бы его до проверки.
+// На Windows POSIX-прав нет, ошибка Chmod там не фатальна.
 func writeFile0600(path string, data []byte) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE, 0o600)
 	if err != nil {
 		return err
 	}
 	if err := f.Chmod(0o600); err != nil && runtime.GOOS != "windows" {
+		f.Close()
+		return err
+	}
+	if err := f.Truncate(0); err != nil {
 		f.Close()
 		return err
 	}
@@ -32,6 +38,29 @@ func writeFile0600(path string, data []byte) error {
 		return err
 	}
 	return f.Close()
+}
+
+// safeBaseName — последний компонент имени файла из метаданных, с учётом
+// разделителей обеих ОС (стор синхронизируется между unix и Windows).
+// Пустой результат — имя непригодно ("", "." или "..").
+func safeBaseName(name string) string {
+	if i := strings.LastIndexAny(name, `/\`); i >= 0 {
+		name = name[i+1:]
+	}
+	if name == "" || name == "." || name == ".." {
+		return ""
+	}
+	return name
+}
+
+// decodedB64Len — размер исходных байт по base64-строке, без декодирования
+// (для показа честного размера бинарного секрета вместо длины base64-текста).
+func decodedB64Len(s string) int {
+	pad := 0
+	for i := len(s) - 1; i >= 0 && s[i] == '='; i-- {
+		pad++
+	}
+	return len(s)/4*3 - pad
 }
 
 // fmtTime показывает RFC3339-таймстемп в человекочитаемом локальном виде.

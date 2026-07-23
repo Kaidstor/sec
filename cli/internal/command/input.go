@@ -28,8 +28,3 @@ func readLine(f *os.File) (string, error) {
 	}
 	return strings.TrimRight(string(out), "\r"), nil
 }
-
-func stdinPiped() bool {
-	st, err := os.Stdin.Stat()
-	return err == nil && st.Mode()&os.ModeCharDevice == 0
-}

@@ -126,10 +126,23 @@ func verifyCommand(args []string) int {
 			die("%v", err)
 		}
 	}
-	cand = strings.TrimRight(cand, "\r\n")
+	// сверяем с сырыми байтами значения: у бинарных Value — base64, сравнивать
+	// нужно декодированное, и только байт-в-байт. Текстовым прощаем хвостовой
+	// перевод строки с обеих сторон: файловые секреты хранятся без трима
+	// (cat добавляет \n кандидату), обычные тримятся при set.
+	stored, berr := sec.Bytes()
+	if berr != nil {
+		die("%s/%s: %v", proj, key, berr)
+	}
 
 	audit.Record("verify", proj+"/"+key, "")
-	if subtle.ConstantTimeCompare([]byte(cand), []byte(sec.Value)) == 1 {
+	match := subtle.ConstantTimeCompare([]byte(cand), stored) == 1
+	if !match && !sec.IsBinary() {
+		match = subtle.ConstantTimeCompare(
+			[]byte(strings.TrimRight(cand, "\r\n")),
+			[]byte(strings.TrimRight(sec.Value, "\r\n"))) == 1
+	}
+	if match {
 		fmt.Println("совпадает")
 		return 0
 	}

@@ -164,34 +164,89 @@ func matchValues(text string, values map[string][]string) []string {
 	return hits
 }
 
-func scanReader(name string, r io.Reader, values map[string][]string) []leak {
+// splitValues делит значения на однострочные и многострочные: первые ищутся
+// построчно (точный номер строки в отчёте), вторые (PEM-ключи и другие файловые
+// секреты) — по тексту целиком, иначе им не совпасть ни с одной строкой.
+func splitValues(values map[string][]string) (single, multi map[string][]string) {
+	single, multi = map[string][]string{}, map[string][]string{}
+	for v, refs := range values {
+		if strings.ContainsRune(v, '\n') {
+			multi[v] = refs
+		} else {
+			single[v] = refs
+		}
+	}
+	return single, multi
+}
+
+// matchMulti ищет многострочные значения в тексте целиком; loc(номер строки
+// начала совпадения) — адрес для отчёта. Хвостовой перевод строки значения не
+// обязан совпасть (файл могли вставить без финального \n).
+func matchMulti(text string, multi map[string][]string, loc func(line int) string) []leak {
 	var out []leak
-	sc := bufio.NewScanner(r)
-	sc.Buffer(make([]byte, 0, 64*1024), 4<<20)
-	line := 0
-	for sc.Scan() {
-		line++
-		if hits := matchValues(sc.Text(), values); len(hits) > 0 {
-			out = append(out, leak{fmt.Sprintf("%s:%d", name, line), hits})
+	for val, refs := range multi {
+		v := strings.TrimRight(val, "\r\n")
+		if idx := strings.Index(text, v); idx >= 0 {
+			out = append(out, leak{loc(1 + strings.Count(text[:idx], "\n")), refs})
 		}
 	}
 	return out
 }
 
+func scanReader(name string, r io.Reader, values map[string][]string) []leak {
+	single, multi := splitValues(values)
+	var out []leak
+	var full strings.Builder // текст целиком — для многострочных значений
+	sc := bufio.NewScanner(r)
+	sc.Buffer(make([]byte, 0, 64*1024), 4<<20)
+	line := 0
+	for sc.Scan() {
+		line++
+		if len(multi) > 0 {
+			full.WriteString(sc.Text())
+			full.WriteByte('\n')
+		}
+		if hits := matchValues(sc.Text(), single); len(hits) > 0 {
+			out = append(out, leak{fmt.Sprintf("%s:%d", name, line), hits})
+		}
+	}
+	out = append(out, matchMulti(full.String(), multi, func(l int) string {
+		return fmt.Sprintf("%s:%d", name, l)
+	})...)
+	return out
+}
+
 // scanStaged сканирует добавленные строки из индекса git (то, что вот-вот
 // уедет в коммит). Разбирает `git diff --cached -U0` по хедерам файлов.
+// Подряд идущие добавленные строки склеиваются в блок — иначе многострочные
+// (файловые) секреты не совпали бы ни с одной отдельной строкой диффа.
 func scanStaged(values map[string][]string) []leak {
 	out, err := exec.Command("git", "diff", "--cached", "-U0").Output()
 	if err != nil {
 		die("git diff --cached: %v (это git-репозиторий?)", err)
 	}
+	single, multi := splitValues(values)
 	var leaks []leak
 	file, line := "", 0
+	var block []string // текущая пачка добавленных строк
+	blockStart := 0
+	flush := func() {
+		if len(block) == 0 {
+			return
+		}
+		f, start := file, blockStart
+		leaks = append(leaks, matchMulti(strings.Join(block, "\n"), multi, func(l int) string {
+			return fmt.Sprintf("%s:%d", f, start+l-1)
+		})...)
+		block = nil
+	}
 	for _, raw := range strings.Split(string(out), "\n") {
 		switch {
 		case strings.HasPrefix(raw, "+++ b/"):
+			flush()
 			file = strings.TrimPrefix(raw, "+++ b/")
 		case strings.HasPrefix(raw, "@@"):
+			flush()
 			// @@ -a,b +c,d @@ — берём стартовую строку нового файла
 			if i := strings.Index(raw, "+"); i >= 0 {
 				num := raw[i+1:]
@@ -201,12 +256,19 @@ func scanStaged(values map[string][]string) []leak {
 				fmt.Sscanf(num, "%d", &line)
 			}
 		case strings.HasPrefix(raw, "+") && !strings.HasPrefix(raw, "+++"):
-			if hits := matchValues(raw[1:], values); len(hits) > 0 {
+			if len(block) == 0 {
+				blockStart = line
+			}
+			block = append(block, raw[1:])
+			if hits := matchValues(raw[1:], single); len(hits) > 0 {
 				leaks = append(leaks, leak{fmt.Sprintf("%s:%d", file, line), hits})
 			}
 			line++
+		default:
+			flush()
 		}
 	}
+	flush()
 	return leaks
 }
 

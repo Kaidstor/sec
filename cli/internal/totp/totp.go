@@ -31,9 +31,26 @@ type params struct {
 	uri     *url.URL // не nil, только если raw был otpauth:// URI
 }
 
+// qGet — значение query-параметра без учёта регистра имени: QR-коды в
+// алфанумерик-режиме отдают URI целиком в верхнем регистре (SECRET=, COUNTER=),
+// как и IsHOTP, весь разбор обязан это принимать.
+func qGet(q url.Values, name string) string {
+	if v := q.Get(name); v != "" {
+		return v
+	}
+	for k, vs := range q {
+		if strings.EqualFold(k, name) && len(vs) > 0 {
+			return vs[0]
+		}
+	}
+	return ""
+}
+
 func parseRaw(raw string) (*params, error) {
 	p := &params{secret: raw, digits: 6, period: 30, algo: sha1.New}
-	if !strings.HasPrefix(raw, "otpauth://") {
+	// префикс — без учёта регистра, в паре с IsHOTP: иначе верхнерегистровый
+	// URI ушёл бы в base32-декодер как «seed» и умер с невнятной ошибкой
+	if !strings.HasPrefix(strings.ToLower(raw), "otpauth://") {
 		return p, nil
 	}
 	u, err := url.Parse(raw)
@@ -42,17 +59,17 @@ func parseRaw(raw string) (*params, error) {
 	}
 	q := u.Query()
 	p.uri = u
-	p.secret = q.Get("secret")
-	if d, err := strconv.Atoi(q.Get("digits")); err == nil && d >= 6 && d <= 8 {
+	p.secret = qGet(q, "secret")
+	if d, err := strconv.Atoi(qGet(q, "digits")); err == nil && d >= 6 && d <= 8 {
 		p.digits = d
 	}
-	if per, err := strconv.Atoi(q.Get("period")); err == nil && per > 0 {
+	if per, err := strconv.Atoi(qGet(q, "period")); err == nil && per > 0 {
 		p.period = per
 	}
 	// счётчик обязателен и валидируется только для hotp: молчаливый ноль на
 	// битом counter выдал бы неверный код и перезаписал URI как counter=1
 	if strings.EqualFold(u.Host, "hotp") {
-		cs := q.Get("counter")
+		cs := qGet(q, "counter")
 		c, cerr := strconv.ParseUint(cs, 10, 64)
 		if cerr != nil {
 			if cs == "" {
@@ -65,7 +82,7 @@ func parseRaw(raw string) (*params, error) {
 		}
 		p.counter = c
 	}
-	if a := strings.ToUpper(q.Get("algorithm")); a != "" {
+	if a := strings.ToUpper(qGet(q, "algorithm")); a != "" {
 		algos := map[string]func() hash.Hash{"SHA1": sha1.New, "SHA256": sha256.New, "SHA512": sha512.New}
 		if p.algo = algos[a]; p.algo == nil {
 			return nil, fmt.Errorf("неподдерживаемый алгоритм %s", a)
@@ -149,6 +166,11 @@ func HOTPCode(raw string) (code, next string, counter uint64, err error) {
 	}
 	code = hotp(p.algo, key, p.counter, p.digits)
 	q := p.uri.Query()
+	for k := range q { // COUNTER=/Counter= — убираем все регистровые варианты, иначе останется два счётчика
+		if strings.EqualFold(k, "counter") {
+			q.Del(k)
+		}
+	}
 	q.Set("counter", strconv.FormatUint(p.counter+1, 10))
 	p.uri.RawQuery = q.Encode()
 	return code, p.uri.String(), p.counter, nil

@@ -82,15 +82,19 @@ func lsCommand(args []string) int {
 				s := own[k]
 				info := keyInfo{Key: k, Enc: s.Enc, UpdatedAt: s.UpdatedAt, History: len(s.History), Meta: s.Meta}
 				val := s.Value
-				if s.Ref != "" { // ссылка — отпечаток/длина считаем по значению родителя
+				if s.Ref != "" { // ссылка — enc/отпечаток/длина считаем по значению родителя
 					info.Ref = store.RefToCLI(s.Ref)
 					if r, _, ok := st.ResolveSecret(proj, k); ok {
-						val = r.Value
+						val, info.Enc = r.Value, r.Enc
 					} else {
 						val = ""
 					}
 				}
-				info.Chars = len([]rune(val))
+				if info.Enc == store.EncB64 {
+					info.Chars = decodedB64Len(val) // размер исходных байт, а не длина base64-текста
+				} else {
+					info.Chars = len([]rune(val))
+				}
 				info.Fingerprint = store.Fingerprint(mkey, val)
 				out = append(out, info)
 			}
@@ -422,14 +426,14 @@ func exportCommand(args []string) int {
 		written = append(written, k)
 	}
 	if len(written) == 0 {
-		die("в %s только бинарные (файловые) ключи — .env не из чего собрать (sec get %s/<KEY> --out <файл>)", proj, proj)
+		die("в %s только бинарные (файловые) ключи — .env не из чего собрать (sec get %s --out <файл>)", proj, store.RefToCLI(proj+"/<KEY>"))
 	}
 	if err := writeFile0600(file, []byte(b.String())); err != nil {
 		die("запись %s: %v", file, err)
 	}
 	if len(binSkipped) > 0 {
-		fmt.Fprintf(os.Stderr, "sec: бинарные (файловые) ключи в .env не пишутся, пропущены: %s (sec get %s/<KEY> --out)\n",
-			strings.Join(binSkipped, ", "), proj)
+		fmt.Fprintf(os.Stderr, "sec: бинарные (файловые) ключи в .env не пишутся, пропущены: %s (sec get %s --out)\n",
+			strings.Join(binSkipped, ", "), store.RefToCLI(proj+"/<KEY>"))
 	}
 	audit.Record("export", proj, "→ "+file)
 	fmt.Printf("записан %s (0600): %s\n", file, strings.Join(written, ", "))

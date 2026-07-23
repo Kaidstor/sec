@@ -3,6 +3,9 @@ package store
 import (
 	"bytes"
 	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"os"
 	"testing"
 )
 
@@ -218,5 +221,54 @@ func TestForgetKeepsEnc(t *testing.T) {
 	PutEnc(m, "B", "AAEC", EncB64)
 	if g := m["B"].Forget(); g.Enc != EncB64 {
 		t.Errorf("forget бинарного должен сохранить enc: %+v", g)
+	}
+}
+
+// Open обязан отказаться открывать стор более новой версии схемы: бинарь,
+// не знающий свежих полей (например enc), молча уничтожил бы их при Save.
+func TestOpenRejectsNewerVersion(t *testing.T) {
+	t.Setenv("SEC_STORE", t.TempDir()+"/store.enc")
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SEC_KEY", hex.EncodeToString(key))
+
+	pt, err := json.Marshal(&Store{Version: storeVersion + 1, Projects: map[string]map[string]Secret{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ct, err := encrypt(key, pt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(Path(), ct, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := Open(false); err == nil {
+		t.Fatal("ожидался отказ: стор версии storeVersion+1")
+	}
+}
+
+// Save всегда штампует текущую версию схемы — стор, прошедший через новый
+// бинарь, помечен так, чтобы будущие несовместимые сборки его распознали.
+func TestSaveStampsCurrentVersion(t *testing.T) {
+	t.Setenv("SEC_STORE", t.TempDir()+"/store.enc")
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SEC_KEY", hex.EncodeToString(key))
+
+	st := &Store{Version: 1, Projects: map[string]map[string]Secret{"p": {"K": {Value: "v"}}}}
+	if err := Save(st, key); err != nil {
+		t.Fatal(err)
+	}
+	got, _, _, err := Open(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Version != storeVersion {
+		t.Errorf("Version = %d, ожидалась %d", got.Version, storeVersion)
 	}
 }

@@ -150,8 +150,10 @@ func selectKeys(keys map[string]store.Secret, only, projLabel string) map[string
 		}
 		if len(binSkipped) > 0 {
 			sort.Strings(binSkipped)
-			fmt.Fprintf(os.Stderr, "sec: бинарные (файловые) ключи пропущены: %s (доставать: sec get %s/<KEY> --out <файл>)\n",
-				strings.Join(binSkipped, ", "), projLabel)
+			// projLabel — внутренний "service@env": в подсказку идёт CLI-форма
+			// "service/<KEY> -e env", иначе команду нельзя скопировать и выполнить
+			fmt.Fprintf(os.Stderr, "sec: бинарные (файловые) ключи пропущены: %s (доставать: sec get %s --out <файл>)\n",
+				strings.Join(binSkipped, ", "), store.RefToCLI(projLabel+"/<KEY>"))
 		}
 		return out
 	}
@@ -160,8 +162,8 @@ func selectKeys(keys map[string]store.Secret, only, projLabel string) map[string
 		k = strings.TrimSpace(k)
 		if s, ok := keys[k]; ok {
 			if s.IsBinary() {
-				die("%s/%s — бинарный (файловый) секрет, в env/Infisical не отдаётся: sec get %s/%s --out <файл>",
-					projLabel, k, projLabel, k)
+				die("%s/%s — бинарный (файловый) секрет, в env/Infisical не отдаётся: sec get %s --out <файл>",
+					projLabel, k, store.RefToCLI(projLabel+"/"+k))
 			}
 			out[k] = s.Value
 		} else {

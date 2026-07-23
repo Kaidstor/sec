@@ -52,6 +52,11 @@ func readHidden(prompt string) (string, error) {
 	return line, nil
 }
 
+func stdinPiped() bool {
+	st, err := os.Stdin.Stat()
+	return err == nil && st.Mode()&os.ModeCharDevice == 0
+}
+
 func sttyEcho(tty *os.File, on bool) error {
 	arg := "-echo"
 	if on {

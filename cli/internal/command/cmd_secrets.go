@@ -55,17 +55,37 @@ func setCommand(args []string) int {
 		if fromClip || fromStdin {
 			die("--from-file несовместим с --clipboard/--stdin")
 		}
-		fi, serr := os.Stat(fromFile)
+		// тип файла проверяем ДО открытия: os.Open на FIFO без писателя виснет
+		// навсегда; девайсы/пайпы к тому же обходят лимит (у них Size()==0)
+		if fi, serr := os.Stat(fromFile); serr != nil {
+			die("чтение %s: %v", fromFile, serr)
+		} else if !fi.Mode().IsRegular() {
+			die("%s — не обычный файл (%v): --from-file читает только файлы", fromFile, fi.Mode().Type())
+		}
+		f, oerr := os.Open(fromFile)
+		if oerr != nil {
+			die("чтение %s: %v", fromFile, oerr)
+		}
+		// fstat уже открытого файла — путь могли подменить между Stat и Open;
+		// чтение с жёстким потолком — файл мог вырасти после проверки размера
+		fi, serr := f.Stat()
 		if serr != nil {
 			die("чтение %s: %v", fromFile, serr)
+		}
+		if !fi.Mode().IsRegular() {
+			die("%s — не обычный файл (%v): --from-file читает только файлы", fromFile, fi.Mode().Type())
 		}
 		if fi.Size() > maxFileSecret {
 			die("%s: %d байт — больше предела %d МиБ (стор целиком живёт в памяти и истории)",
 				fromFile, fi.Size(), maxFileSecret>>20)
 		}
-		data, rerr := os.ReadFile(fromFile)
+		data, rerr := io.ReadAll(io.LimitReader(f, maxFileSecret+1))
+		f.Close()
 		if rerr != nil {
 			die("чтение %s: %v", fromFile, rerr)
+		}
+		if len(data) > maxFileSecret {
+			die("%s: файл вырос при чтении — больше предела %d МиБ", fromFile, maxFileSecret>>20)
 		}
 		if len(data) == 0 {
 			die("файл %s пуст, ничего не сохранено", fromFile)
@@ -127,6 +147,8 @@ func setCommand(args []string) int {
 	applyMetaFlags(keys, key, note, kind)
 	if fileName != "" {
 		applyFileMeta(keys, key, fileName)
+	} else {
+		clearFileMeta(keys, key) // текст поверх файлового секрета — прежнее имя файла больше не о нём
 	}
 	if err := store.Save(st, mkey); err != nil {
 		die("запись хранилища: %v", err)
@@ -169,6 +191,27 @@ func applyFileMeta(keys map[string]store.Secret, key, fileName string) {
 	}
 	m.Filename = fileName
 	e.Meta = &m
+	keys[key] = e
+}
+
+// clearFileMeta снимает файловую метку при перезаписи ключа текстовым значением:
+// иначе get --out <каталог> положил бы новый текст под именем старого
+// сертификата, а ls показывал бы «file, server.p12» про обычный токен.
+func clearFileMeta(keys map[string]store.Secret, key string) {
+	e := keys[key]
+	if e.Meta == nil || e.Meta.Filename == "" {
+		return
+	}
+	m := *e.Meta
+	m.Filename = ""
+	if m.Kind == "file" {
+		m.Kind = ""
+	}
+	if m == (store.Meta{}) {
+		e.Meta = nil
+	} else {
+		e.Meta = &m
+	}
 	keys[key] = e
 }
 
@@ -226,6 +269,7 @@ func genCommand(args []string) int {
 	}
 	existed := store.Put(keys, key, string(val))
 	applyMetaFlags(keys, key, note, kind)
+	clearFileMeta(keys, key) // gen поверх файлового секрета — имя файла больше не о нём
 	if err := store.Save(st, mkey); err != nil {
 		die("запись хранилища: %v", err)
 	}
@@ -293,7 +337,12 @@ func getCommand(args []string) int {
 		if fi, serr := os.Stat(outFile); serr == nil && fi.IsDir() {
 			name := key // в каталог — под исходным именем файла, если оно известно
 			if sec.Meta != nil && sec.Meta.Filename != "" {
-				name = sec.Meta.Filename
+				// Filename мог приехать из чужого стора (sync/restore) и содержать
+				// разделители любой ОС — в путь идёт только простое имя, без
+				// возможности выйти из каталога
+				if base := safeBaseName(sec.Meta.Filename); base != "" {
+					name = base
+				}
 			}
 			target = filepath.Join(outFile, name)
 		}
@@ -734,7 +783,10 @@ func hotpAdvance(proj, key string, clip bool) int {
 	cur.Value = next
 	st.Projects[tp][tk] = cur
 	if err := store.Save(st, mkey); err != nil {
-		die("запись хранилища: %v", err)
+		// код уже посчитан — не выдать его из-за read-only стора (бэкап 0400,
+		// синхронизированная реплика) значит отказать в 2FA на ровном месте.
+		// Предупреждаем: счётчик не сдвинут, повторный вызов даст тот же код.
+		fmt.Fprintf(os.Stderr, "sec: счётчик HOTP не сохранён (%v) — код ниже, но повторный вызов выдаст его же\n", err)
 	}
 	audit.Record("otp", proj+"/"+key, fmt.Sprintf("hotp counter=%d", counter))
 	if clip {
