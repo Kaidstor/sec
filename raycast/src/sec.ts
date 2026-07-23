@@ -76,11 +76,23 @@ export interface SecretMeta {
 
 export interface SecretEntry {
   key: string;
+  ref?: string; // CLI-адрес родителя, если ключ — ссылка
+  enc?: string; // "b64" — бинарный (файловый) секрет: в буфер/env не отдаётся, chars — размер в байтах
   updatedAt: string;
   history: number;
   chars: number;
   fingerprint: string;
   meta?: SecretMeta;
+}
+
+export function isBinaryEntry(entry: SecretEntry): boolean {
+  return entry.enc === "b64";
+}
+
+// Команда для терминала: единственный способ достать бинарный секрет — в файл.
+export function getOutCommand(project: string, key: string): string {
+  const { service, env } = splitProject(project);
+  return `sec get ${service}/${key} --out <файл>${env ? ` -e ${env}` : ""}`;
 }
 
 export type SecretStore = Record<string, SecretEntry[]>;

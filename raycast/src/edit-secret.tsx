@@ -67,7 +67,9 @@ export function EditSecretForm(props: { project: string; entry: SecretEntry; onC
         </ActionPanel>
       }
     >
-      <Form.Description text={`${ref} — ${entry.chars} симв., отпечаток ${entry.fingerprint}`} />
+      <Form.Description
+        text={`${ref} — ${entry.enc === "b64" ? `файл, ${entry.chars} байт` : `${entry.chars} симв.`}, отпечаток ${entry.fingerprint}`}
+      />
       <Form.PasswordField id="value" title="Новое значение" placeholder="пусто — оставить текущее" />
       <Form.PasswordField
         id="valueRepeat"

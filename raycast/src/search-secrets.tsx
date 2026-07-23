@@ -15,7 +15,7 @@ import {
 } from "@raycast/api";
 import { useCachedPromise } from "@raycast/utils";
 import { EditSecretForm } from "./edit-secret";
-import { HistoryVersion, SecretEntry, keyArgs, keyHistory, listSecrets, runSec } from "./sec";
+import { HistoryVersion, SecretEntry, getOutCommand, isBinaryEntry, keyArgs, keyHistory, listSecrets, runSec } from "./sec";
 
 const KIND_COLOR: Record<string, Color> = {
   password: Color.Orange,
@@ -55,11 +55,12 @@ function SecretItem(props: { project: string; entry: SecretEntry; onChange: () =
   const ref = `${project}/${entry.key}`;
   const kind = entry.meta?.kind;
   const isTotp = kind === "totp";
+  const isBinary = isBinaryEntry(entry);
 
   const accessories: List.Item.Accessory[] = [];
   if (kind) accessories.push({ tag: { value: kind, color: KIND_COLOR[kind] ?? Color.SecondaryText } });
   if (entry.history > 0) accessories.push({ icon: Icon.Clock, text: String(entry.history), tooltip: "версий в истории" });
-  accessories.push({ text: `${entry.chars} симв.` });
+  accessories.push({ text: isBinary ? `${entry.chars} байт` : `${entry.chars} симв.` });
   accessories.push({ date: new Date(entry.updatedAt), tooltip: `обновлён ${entry.updatedAt}` });
 
   const copyValue = async (extra: string[] = []) => {
@@ -111,12 +112,19 @@ function SecretItem(props: { project: string; entry: SecretEntry; onChange: () =
       title={entry.key}
       subtitle={entry.meta?.note}
       keywords={[project, ...project.split(/[@._-]/), ...(entry.meta?.note?.split(/\s+/) ?? [])]}
-      icon={isTotp ? Icon.Clock : Icon.Key}
+      icon={isBinary ? Icon.Document : isTotp ? Icon.Clock : Icon.Key}
       accessories={accessories}
       actions={
         <ActionPanel>
           <ActionPanel.Section>
-            {isTotp ? (
+            {isBinary ? (
+              // бинарный (файловый) секрет в буфер не отдаётся — даём готовую команду
+              <Action.CopyToClipboard
+                title="Скопировать команду выгрузки в файл"
+                icon={Icon.Terminal}
+                content={getOutCommand(project, entry.key)}
+              />
+            ) : isTotp ? (
               <>
                 <Action title="Скопировать TOTP-код" icon={Icon.Clipboard} onAction={copyOtp} />
                 <Action title="Скопировать Seed" icon={Icon.CopyClipboard} onAction={() => copyValue()} />
