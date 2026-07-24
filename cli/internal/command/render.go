@@ -78,7 +78,7 @@ func renderCommand(args []string) int {
 	if err := t.Execute(&buf, nil); err != nil {
 		die("рендер: %v", err)
 	}
-	if err := writeFile0600(file, buf.Bytes()); err != nil {
+	if err := writeSecretFile(file, buf.Bytes()); err != nil {
 		die("запись %s: %v", file, err)
 	}
 	audit.Record("render", proj, tpl+" → "+file)

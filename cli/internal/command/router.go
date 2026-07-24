@@ -284,6 +284,13 @@ Windows Credential Manager (fallback: env SEC_KEY / файл).
 
 Флаги gen: --len N (умолч. 32), --symbols (добавить спецсимволы), --clip
 
+Запись по ssh: --file (export/render) и --out (get) принимают scp-адрес
+[user@]host:/путь — содержимое уходит на хост через stdin ssh, без временного
+файла на локальном диске и без значений в argv:
+  sec export api --file recon:/app/.env
+  sec get api/CERT --out recon:/app/certs/server.p12
+Хосты/алиасы — из ~/.ssh/config. Локальный путь с ':' пиши как ./имя:файла.
+
 Переменные окружения:
   SEC_STORE       путь к хранилищу (умолч. ~/.local/share/sec/store.enc,
                   Windows: %LOCALAPPDATA%\sec\store.enc)

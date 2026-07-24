@@ -346,7 +346,7 @@ func getCommand(args []string) int {
 			}
 			target = filepath.Join(outFile, name)
 		}
-		if werr := writeFile0600(target, raw); werr != nil {
+		if werr := writeSecretFile(target, raw); werr != nil {
 			die("запись %s: %v", target, werr)
 		}
 		audit.Record("get", proj+"/"+key, strings.Replace(detail, "показано", "→ файл "+target, 1))

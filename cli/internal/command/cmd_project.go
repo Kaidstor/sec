@@ -428,7 +428,7 @@ func exportCommand(args []string) int {
 	if len(written) == 0 {
 		die("в %s только бинарные (файловые) ключи — .env не из чего собрать (sec get %s --out <файл>)", proj, store.RefToCLI(proj+"/<KEY>"))
 	}
-	if err := writeFile0600(file, []byte(b.String())); err != nil {
+	if err := writeSecretFile(file, []byte(b.String())); err != nil {
 		die("запись %s: %v", file, err)
 	}
 	if len(binSkipped) > 0 {
