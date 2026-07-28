@@ -164,6 +164,7 @@ func setCommand(args []string) int {
 		size = fmt.Sprintf("бинарный файл, %d байт → base64", len(raw))
 	}
 	fmt.Printf("%s/%s %s (%s, значение скрыто)\n", proj, key, verb, size)
+	printDupeHints(st, mkey, proj, key)
 	if fromClip && clearClip {
 		if err := clipboardWrite(""); err == nil {
 			fmt.Println("буфер обмена очищен")
@@ -279,6 +280,7 @@ func genCommand(args []string) int {
 		verb = "перегенерирован (прежнее значение в истории — sec undo вернёт)"
 	}
 	fmt.Printf("%s/%s %s (%d символов, значение скрыто)\n", proj, key, verb, length)
+	printDupeHints(st, mkey, proj, key)
 	if clip {
 		if err := clipboardWrite(string(val)); err != nil {
 			die("буфер обмена: %v", err)

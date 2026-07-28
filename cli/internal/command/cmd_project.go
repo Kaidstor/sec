@@ -593,6 +593,7 @@ func writeImported(proj string, kv map[string]string, source string) (int, int) 
 	}
 	keys := st.Project(proj)
 	added, updated, skipped := 0, 0, 0
+	var written []string
 	for k, v := range kv {
 		if editBlock(st, proj, k) != "" { // ссылку/наследование не перетираем импортом
 			fmt.Fprintf(os.Stderr, "sec: %s/%s пропущен — ссылка/наследование (перебить: sec set %s/%s --override)\n", proj, k, proj, k)
@@ -604,6 +605,7 @@ func writeImported(proj string, kv map[string]string, source string) (int, int) 
 		} else {
 			added++
 		}
+		written = append(written, k)
 	}
 	if err := store.Save(st, mkey); err != nil {
 		die("запись хранилища: %v", err)
@@ -615,6 +617,7 @@ func writeImported(proj string, kv map[string]string, source string) (int, int) 
 	}
 	fmt.Printf("импортировано в %s: %s (новых %d, обновлено %d%s)\n",
 		proj, strings.Join(store.SortedKeys(kv), ", "), added, updated, tail)
+	printDupeHints(st, mkey, proj, written...)
 	return added, updated
 }
 
