@@ -48,8 +48,9 @@ export async function runSec(args: string[]): Promise<string> {
   }
 }
 
-// Для sec set --stdin: значение уходит через pipe, не через argv.
-export function runSecWithInput(args: string[], input: string): Promise<string> {
+// Для sec set --stdin: значение уходит через pipe, не через argv. stderr
+// отдаётся и при успехе — там живут подсказки CLI (например, о дубле значения).
+export function runSecWithInput(args: string[], input: string): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn(secBinary(), args, { stdio: ["pipe", "pipe", "pipe"] });
     let out = "";
@@ -58,12 +59,27 @@ export function runSecWithInput(args: string[], input: string): Promise<string> 
     child.stderr.on("data", (d) => (errOut += d));
     child.on("error", (e) => reject(new Error(e.message)));
     child.on("close", (code) => {
-      if (code === 0) resolve(out);
+      if (code === 0) resolve({ stdout: out, stderr: errOut });
       else reject(new Error(errOut.replace(/^sec:\s*/gm, "").trim() || `sec завершился с кодом ${code}`));
     });
     child.stdin.write(input);
     child.stdin.end();
   });
+}
+
+export interface DupeHint {
+  text: string; // «значение X уже есть в Y — вместо копии можно ссылку: …»
+  linkCmd?: string; // готовая команда sec link, если CLI смог её собрать
+}
+
+// Подсказка sec о дубле значения из stderr после set (dupehint.go).
+export function dupeHint(stderr: string): DupeHint | undefined {
+  const line = stderr
+    .split("\n")
+    .map((l) => l.replace(/^sec:\s*/, "").trim())
+    .find((l) => l.includes("уже есть в"));
+  if (!line) return undefined;
+  return { text: line, linkCmd: line.match(/sec link .+$/)?.[0] };
 }
 
 // --- типы вывода sec ---

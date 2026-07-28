@@ -1,8 +1,8 @@
-import { Action, ActionPanel, Form, Icon, LaunchProps, Toast, popToRoot, showToast } from "@raycast/api";
+import { Action, ActionPanel, Clipboard, Form, Icon, LaunchProps, Toast, popToRoot, showToast } from "@raycast/api";
 import { useCachedPromise } from "@raycast/utils";
 import { useState } from "react";
 import { ProjectField, rememberProject, useProjectPicker } from "./project-field";
-import { KEY_RE, KINDS, listSecrets, runSecWithInput, splitProject } from "./sec";
+import { KEY_RE, KINDS, dupeHint, listSecrets, runSecWithInput, splitProject } from "./sec";
 
 interface FormValues {
   project: string;
@@ -56,9 +56,23 @@ export default function AddSecret(props: Props) {
     if (env) args.push("-e", env);
 
     try {
-      await runSecWithInput(args, values.value);
+      const { stderr } = await runSecWithInput(args, values.value);
       await rememberProject(project);
-      await showToast({ style: Toast.Style.Success, title: `${project}/${key} сохранён` });
+      const hint = dupeHint(stderr);
+      await showToast({
+        style: Toast.Style.Success,
+        title: `${project}/${key} сохранён`,
+        message: hint?.text,
+        primaryAction: hint?.linkCmd
+          ? {
+              title: "Скопировать команду sec link",
+              onAction: async (toast) => {
+                await Clipboard.copy(hint.linkCmd as string);
+                await toast.hide();
+              },
+            }
+          : undefined,
+      });
       await popToRoot();
     } catch (err) {
       await showToast({ style: Toast.Style.Failure, title: "Не сохранилось", message: String(err) });

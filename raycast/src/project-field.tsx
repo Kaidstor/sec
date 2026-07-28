@@ -8,9 +8,14 @@ export const CREATE_VALUE = "__create__";
 
 const LAST_PROJECT_KEY = "last-project";
 
-// Запомнить проект как последний использованный — формы предвыберут его в следующий раз.
+// Запомнить проект как последний использованный — формы предвыберут его,
+// а поиск поднимет его секцию наверх в следующий раз.
 export function rememberProject(project: string): Promise<void> {
   return LocalStorage.setItem(LAST_PROJECT_KEY, project);
+}
+
+export async function getLastProject(): Promise<string | undefined> {
+  return LocalStorage.getItem<string>(LAST_PROJECT_KEY);
 }
 
 function levenshtein(a: string, b: string): number {

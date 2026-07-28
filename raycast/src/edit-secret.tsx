@@ -1,6 +1,6 @@
-import { Action, ActionPanel, Form, Icon, Toast, showToast, useNavigation } from "@raycast/api";
+import { Action, ActionPanel, Clipboard, Form, Icon, Toast, showToast, useNavigation } from "@raycast/api";
 import { useState } from "react";
-import { KINDS, SecretEntry, keyArgs, runSec, runSecWithInput } from "./sec";
+import { DupeHint, KINDS, SecretEntry, dupeHint, keyArgs, runSec, runSecWithInput } from "./sec";
 
 interface FormValues {
   value: string;
@@ -37,8 +37,10 @@ export function EditSecretForm(props: { project: string; entry: SecretEntry; onC
     }
 
     try {
+      let hint: DupeHint | undefined;
       if (value) {
-        await runSecWithInput(keyArgs("set", project, entry.key, "--stdin"), value);
+        const { stderr } = await runSecWithInput(keyArgs("set", project, entry.key, "--stdin"), value);
+        hint = dupeHint(stderr);
       }
       if (noteChanged || kindChanged) {
         const flags: string[] = [];
@@ -49,7 +51,16 @@ export function EditSecretForm(props: { project: string; entry: SecretEntry; onC
       await showToast({
         style: Toast.Style.Success,
         title: `${ref} обновлён`,
-        message: value ? "старое значение — в истории (sec undo)" : "метаданные",
+        message: hint?.text ?? (value ? "старое значение — в истории (sec undo)" : "метаданные"),
+        primaryAction: hint?.linkCmd
+          ? {
+              title: "Скопировать команду sec link",
+              onAction: async (toast) => {
+                await Clipboard.copy(hint.linkCmd as string);
+                await toast.hide();
+              },
+            }
+          : undefined,
       });
       onChange();
       pop();

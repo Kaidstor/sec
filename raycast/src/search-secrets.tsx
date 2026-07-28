@@ -15,6 +15,7 @@ import {
 } from "@raycast/api";
 import { useCachedPromise } from "@raycast/utils";
 import { EditSecretForm } from "./edit-secret";
+import { getLastProject, rememberProject } from "./project-field";
 import { HistoryVersion, SecretEntry, getOutCommand, isBinaryEntry, keyArgs, keyHistory, listSecrets, runSec } from "./sec";
 
 const KIND_COLOR: Record<string, Color> = {
@@ -29,8 +30,15 @@ export default function SearchSecrets() {
     keepPreviousData: true,
     failureToastOptions: { title: "sec ls не выполнился" },
   });
+  const { data: lastProject } = useCachedPromise(getLastProject, [], { keepPreviousData: true });
 
+  // Последний использованный проект — первой секцией: скопировал значение,
+  // перезашёл — ключи того же проекта снова под рукой без поиска.
   const projects = Object.keys(data ?? {}).sort();
+  if (lastProject && projects.includes(lastProject)) {
+    projects.splice(projects.indexOf(lastProject), 1);
+    projects.unshift(lastProject);
+  }
 
   return (
     <List isLoading={isLoading} searchBarPlaceholder="Проект или ключ…">
@@ -66,6 +74,7 @@ function SecretItem(props: { project: string; entry: SecretEntry; onChange: () =
   const copyValue = async (extra: string[] = []) => {
     try {
       await runSec(keyArgs("get", project, entry.key, "--clip", ...extra));
+      await rememberProject(project);
       await showHUD(`✓ ${ref} — в буфере (значение не показано)`);
     } catch (err) {
       await showToast({ style: Toast.Style.Failure, title: "Не скопировалось", message: String(err) });
@@ -75,6 +84,7 @@ function SecretItem(props: { project: string; entry: SecretEntry; onChange: () =
   const copyOtp = async () => {
     try {
       await runSec(keyArgs("otp", project, entry.key, "--clip"));
+      await rememberProject(project);
       await showHUD(`✓ TOTP ${ref} — в буфере`);
     } catch (err) {
       await showToast({ style: Toast.Style.Failure, title: "TOTP не получился", message: String(err) });
@@ -123,6 +133,7 @@ function SecretItem(props: { project: string; entry: SecretEntry; onChange: () =
                 title="Скопировать команду выгрузки в файл"
                 icon={Icon.Terminal}
                 content={getOutCommand(project, entry.key)}
+                onCopy={() => rememberProject(project)}
               />
             ) : isTotp ? (
               <>
