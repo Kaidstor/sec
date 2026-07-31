@@ -64,6 +64,39 @@ func collectStoreValues(st *store.Store, minLen int, withHistory bool) (map[stri
 	return values, skipped
 }
 
+// collectBinaryValues — сырые байты бинарных (base64) секретов, ключ карты —
+// байты как string. Утёкший на диск файл в исходной форме base64-текста не
+// содержит — искать надо сами байты, текстовый скан их не увидит.
+func collectBinaryValues(st *store.Store, minLen int, withHistory bool) map[string][]string {
+	bins := map[string][]string{}
+	add := func(v store.Version, ref string) {
+		if v.Enc != store.EncB64 {
+			return
+		}
+		raw, err := (store.Secret{Value: v.Value, Enc: v.Enc}).Bytes()
+		if err != nil || len(raw) < minLen {
+			return
+		}
+		bins[string(raw)] = append(bins[string(raw)], ref)
+	}
+	for _, p := range store.SortedKeys(st.Projects) {
+		for _, k := range store.SortedKeys(st.Projects[p]) {
+			sec := st.Projects[p][k]
+			if sec.Ref != "" {
+				continue
+			}
+			ref := p + "/" + k
+			add(store.Version{Value: sec.Value, Enc: sec.Enc}, ref)
+			if withHistory {
+				for _, v := range sec.History {
+					add(v, ref+"~prev")
+				}
+			}
+		}
+	}
+	return bins
+}
+
 func scanCommand(args []string) int {
 	fs := flag.NewFlagSet("scan", flag.ExitOnError)
 	var staged bool
@@ -81,7 +114,8 @@ func scanCommand(args []string) int {
 	}
 
 	values, skipped := collectStoreValues(st, minLen, withHistory)
-	if len(values) == 0 {
+	bins := collectBinaryValues(st, minLen, withHistory)
+	if len(values) == 0 && len(bins) == 0 {
 		fmt.Fprintln(os.Stderr, "sec: нет значений для поиска (все короче --min либо стор пуст)")
 		return 0
 	}
@@ -93,9 +127,13 @@ func scanCommand(args []string) int {
 
 	switch {
 	case staged:
-		leaks = scanStaged(values)
+		leaks = append(scanStaged(values), scanStagedBinaries(bins)...)
 	case len(paths) == 1 && paths[0] == "-":
-		leaks = scanReader("stdin", os.Stdin, values)
+		data, rerr := io.ReadAll(io.LimitReader(os.Stdin, scanMaxFileBytes))
+		if rerr != nil {
+			die("чтение stdin: %v", rerr)
+		}
+		leaks = scanData("stdin", data, values, bins)
 	case len(paths) == 0:
 		die("укажи пути, - для stdin или --staged")
 	default:
@@ -115,7 +153,7 @@ func scanCommand(args []string) int {
 				if path == self || strings.HasPrefix(filepath.Base(path), "audit.jsonl") {
 					return nil
 				}
-				leaks = append(leaks, scanFile(path, values)...)
+				leaks = append(leaks, scanFile(path, values, bins)...)
 				return nil
 			})
 		}
@@ -132,25 +170,36 @@ func scanCommand(args []string) int {
 	return 1
 }
 
-func scanFile(path string, values map[string][]string) []leak {
+func scanFile(path string, values, bins map[string][]string) []leak {
 	fi, err := os.Stat(path)
 	if err != nil || fi.Size() > scanMaxFileBytes {
 		return nil
 	}
-	f, err := os.Open(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil
 	}
-	defer f.Close()
-	head := make([]byte, 512)
-	n, _ := f.Read(head)
-	if bytes.IndexByte(head[:n], 0) >= 0 {
-		return nil // бинарник
+	return scanData(path, data, values, bins)
+}
+
+// scanData ищет утечки в содержимом: сырые байты бинарных секретов — по всему
+// содержимому целиком (в любом файле, даже «текстовом» — бинарь мог быть вклеен
+// глубже первых 512 байт), текстовые значения — построчно в текстовых файлах.
+func scanData(name string, data []byte, values, bins map[string][]string) []leak {
+	var out []leak
+	for raw, refs := range bins {
+		if bytes.Contains(data, []byte(raw)) {
+			out = append(out, leak{name, refs})
+		}
 	}
-	if _, err := f.Seek(0, io.SeekStart); err != nil {
-		return nil
+	head := data
+	if len(head) > 512 {
+		head = head[:512]
 	}
-	return scanReader(path, f, values)
+	if bytes.IndexByte(head, 0) >= 0 {
+		return out // бинарник — построчный текстовый скан не имеет смысла
+	}
+	return append(out, scanReader(name, bytes.NewReader(data), values)...)
 }
 
 // matchValues возвращает refs всех сохранённых значений, встречающихся в строке.
@@ -269,6 +318,39 @@ func scanStaged(values map[string][]string) []leak {
 		}
 	}
 	flush()
+	return leaks
+}
+
+// scanStagedBinaries ищет сырые байты бинарных секретов в застейдженных блобах:
+// в тексте diff содержимого бинарных файлов нет («Binary files differ»), поэтому
+// каждый застейдженный файл читается из индекса (git show :путь) и проверяется
+// на вхождение целиком. Текстовые блобы проверяются тоже — бинарь могли вклеить
+// в «текстовый» файл.
+func scanStagedBinaries(bins map[string][]string) []leak {
+	if len(bins) == 0 {
+		return nil
+	}
+	// -z: пути разделены NUL и не квотятся (иначе кириллица/пробелы приедут в кавычках)
+	out, err := exec.Command("git", "diff", "--cached", "--name-only", "-z", "--diff-filter=d").Output()
+	if err != nil {
+		return nil // сам diff уже отработал в scanStaged — здесь молча пропускаем
+	}
+	var leaks []leak
+	for _, path := range strings.Split(string(out), "\x00") {
+		if path == "" {
+			continue
+		}
+		// путь от корня репозитория; ":путь" в ревизии git — тоже от корня
+		blob, berr := exec.Command("git", "show", ":"+path).Output()
+		if berr != nil || len(blob) > scanMaxFileBytes {
+			continue
+		}
+		for raw, refs := range bins {
+			if bytes.Contains(blob, []byte(raw)) {
+				leaks = append(leaks, leak{path, refs})
+			}
+		}
+	}
 	return leaks
 }
 
