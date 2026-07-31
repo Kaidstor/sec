@@ -23,6 +23,13 @@ import (
 	"syscall"
 )
 
+// execSpawn (для run --file) на Windows не отличается от execReplace: тот и
+// так запускает дочерний процесс и ждёт его — очистка файлов после возврата
+// работает без отдельного пути.
+func execSpawn(path string, argv, env []string) (int, error) {
+	return execReplace(path, argv, env)
+}
+
 func execReplace(path string, argv, env []string) (int, error) {
 	var cmd *exec.Cmd
 	if ext := strings.ToLower(filepath.Ext(path)); ext == ".cmd" || ext == ".bat" {

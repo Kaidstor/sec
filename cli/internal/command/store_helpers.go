@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -38,6 +39,19 @@ func writeFile0600(path string, data []byte) error {
 		return err
 	}
 	return f.Close()
+}
+
+// storedFileMode — права исходного файла из метаданных (set --from-file).
+// Только perm-биты: setuid/setgid/sticky из чужого стора (sync/restore) не тащим.
+func storedFileMode(sec store.Secret) (os.FileMode, bool) {
+	if sec.Meta == nil || sec.Meta.FileMode == "" {
+		return 0, false
+	}
+	n, err := strconv.ParseUint(sec.Meta.FileMode, 8, 32)
+	if err != nil {
+		return 0, false
+	}
+	return os.FileMode(n) & 0o777, true
 }
 
 // safeBaseName — последний компонент имени файла из метаданных, с учётом

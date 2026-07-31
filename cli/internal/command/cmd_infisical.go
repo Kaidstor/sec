@@ -63,7 +63,9 @@ func pushCommand(args []string) int {
 		die("проект %q пуст или не существует (sec ls)", sp)
 	}
 
-	kv := selectKeys(keys, only, sp)
+	// push — миграция в командный источник истины, не env-инъекция: текстовые
+	// файловые (kind: file) уходят как есть, ARG_MAX здесь ни при чём
+	kv := selectKeys(keys, only, sp, true)
 
 	if err := infisical.Push(infisical.Ref{Env: ienv, Path: path, ProjectID: projectID, Token: token}, kv); err != nil {
 		die("%v", err)

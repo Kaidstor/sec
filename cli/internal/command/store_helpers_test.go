@@ -82,11 +82,28 @@ func TestDecodedB64Len(t *testing.T) {
 	}
 }
 
+// storedFileMode: только perm-биты, мусор из чужого стора не роняет запись.
+func TestStoredFileMode(t *testing.T) {
+	if _, ok := storedFileMode(store.Secret{}); ok {
+		t.Error("без меты режима нет")
+	}
+	if m, ok := storedFileMode(store.Secret{Meta: &store.Meta{FileMode: "0644"}}); !ok || m != 0o644 {
+		t.Errorf("0644 → %v, %v", m, ok)
+	}
+	// setuid (4755) не тащим — остаются только perm-биты
+	if m, ok := storedFileMode(store.Secret{Meta: &store.Meta{FileMode: "4755"}}); !ok || m != 0o755 {
+		t.Errorf("4755 → %v (ожидалось 0755)", m)
+	}
+	if _, ok := storedFileMode(store.Secret{Meta: &store.Meta{FileMode: "мусор"}}); ok {
+		t.Error("нечисловой режим должен игнорироваться")
+	}
+}
+
 // Перезапись файлового секрета текстом обязана снять файловую метку: иначе
 // get --out положит новый токен под именем старого сертификата.
 func TestClearFileMeta(t *testing.T) {
 	keys := map[string]store.Secret{
-		"A": {Value: "v", Meta: &store.Meta{Kind: "file", Filename: "a.p12"}},
+		"A": {Value: "v", Meta: &store.Meta{Kind: "file", Filename: "a.p12", FileMode: "0644"}},
 		"B": {Value: "v", Meta: &store.Meta{Kind: "file", Filename: "b.pem", Note: "note"}},
 		"C": {Value: "v", Meta: &store.Meta{Kind: "password", Filename: "odd"}},
 		"D": {Value: "v"},

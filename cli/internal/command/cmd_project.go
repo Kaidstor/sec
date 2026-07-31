@@ -313,8 +313,10 @@ func findCommand(args []string) int {
 	return 0
 }
 
-// runCommand запускает команду, подменив себя ею (exec) с env-инъекцией
-// секретов проекта — значения живут только в окружении дочернего процесса.
+// runCommand запускает команду с env-инъекцией секретов проекта — значения
+// живут только в окружении дочернего процесса. Без --file процесс подменяет
+// себя командой (exec); с --file остаётся ждать её, чтобы удалить
+// материализованные файлы после выхода.
 func runCommand(args []string) int {
 	sep := -1
 	for i, a := range args {
@@ -324,7 +326,7 @@ func runCommand(args []string) int {
 		}
 	}
 	if sep < 0 {
-		die("нужен разделитель --: sec run [proj] [--only A,B] -- cmd args...")
+		die("нужен разделитель --: sec run [proj] [--only A,B] [--file KEY[:путь]] -- cmd args...")
 	}
 	head, tail := args[:sep], args[sep+1:]
 	if len(tail) == 0 {
@@ -334,37 +336,76 @@ func runCommand(args []string) int {
 	service, rest := splitArgs(head)
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	var only string
-	var verbose bool
+	var verbose, includeFiles bool
+	var mountSpecs stringList
 	fs.StringVar(&only, "only", "", "инъектить только перечисленные ключи (через запятую)")
 	fs.BoolVar(&verbose, "v", false, "показать имена инъектированных ключей")
+	fs.BoolVar(&includeFiles, "include-files", false, "инжектить в env и файловые (kind: file) ключи — по умолчанию пропускаются")
+	fs.Var(&mountSpecs, "file", "материализовать файловый секрет во временный файл: [ENV=]<KEY|proj/KEY>[:путь], путь уйдёт в env-переменную (повторяемый)")
 	getEnv := addEnvFlag(fs)
 	_ = fs.Parse(rest)
 	proj, _ := resolveServiceProj(service, fs, getEnv())
+
+	mounts, err := parseFileMounts(mountSpecs, proj)
+	if err != nil {
+		die("%v", err)
+	}
 
 	st, _, _, err := store.Open(false)
 	if err != nil {
 		die("%v", err)
 	}
 	keys := st.EffectiveKeys(proj) // собственные + унаследованные, ссылки разрешены
-	if len(keys) == 0 {
+	if len(keys) == 0 && len(mounts) == 0 {
 		die("проект %q пуст или не существует (sec ls)", proj)
 	}
-
-	extra := selectKeys(keys, only, proj)
-	if verbose {
-		fmt.Fprintf(os.Stderr, "[%s → env += %s]\n", proj, strings.Join(store.SortedKeys(extra), ", "))
+	for _, m := range mounts {
+		if m.proj == proj {
+			delete(keys, m.key) // ключ уйдёт путём через --file — «пропущен» было бы шумом
+		}
 	}
+
+	extra := selectKeys(keys, only, proj, includeFiles)
 
 	path, err := exec.LookPath(tail[0])
 	if err != nil {
 		die("команда не найдена: %s", tail[0])
 	}
-	audit.Record("run", proj, fmt.Sprintf("env += %s → %s", strings.Join(store.SortedKeys(extra), ","), tail[0]))
-	code, err := execReplace(path, tail, mergedEnv(extra))
-	if err != nil {
-		die("exec %s: %v", tail[0], err)
+
+	if len(mounts) == 0 {
+		if verbose {
+			fmt.Fprintf(os.Stderr, "[%s → env += %s]\n", proj, strings.Join(store.SortedKeys(extra), ", "))
+		}
+		audit.Record("run", proj, fmt.Sprintf("env += %s → %s", strings.Join(store.SortedKeys(extra), ","), tail[0]))
+		code, err := execReplace(path, tail, mergedEnv(extra))
+		if err != nil {
+			die("exec %s: %v", tail[0], err)
+		}
+		return code // на unix недостижимо: exec замещает процесс (см. exec_<os>.go)
 	}
-	return code // на unix недостижимо: exec замещает процесс (см. exec_<os>.go)
+
+	fenv, cleanup, err := materializeMounts(st, mounts) // при ошибке прибирает за собой сам
+	if err != nil {
+		die("%v", err)
+	}
+	for k, v := range fenv {
+		extra[k] = v // путь файла поверх одноимённого секрета: --file — явное намерение
+	}
+	if verbose {
+		fmt.Fprintf(os.Stderr, "[%s → env += %s]\n", proj, strings.Join(store.SortedKeys(extra), ", "))
+		for _, k := range store.SortedKeys(fenv) {
+			fmt.Fprintf(os.Stderr, "[файл %s=%s — удалится после завершения]\n", k, fenv[k])
+		}
+	}
+	audit.Record("run", proj, fmt.Sprintf("env += %s, файлы: %s → %s",
+		strings.Join(store.SortedKeys(extra), ","), strings.Join(store.SortedKeys(fenv), ","), tail[0]))
+	code, rerr := execSpawn(path, tail, mergedEnv(extra))
+	cleanup()
+	if rerr != nil {
+		fmt.Fprintf(os.Stderr, "sec: exec %s: %v\n", tail[0], rerr)
+		return 2
+	}
+	return code
 }
 
 // mergedEnv накладывает extra поверх текущего окружения без дублей
@@ -397,7 +438,9 @@ func exportCommand(args []string) int {
 	service, rest := splitArgs(args)
 	fs := flag.NewFlagSet("export", flag.ExitOnError)
 	var file string
+	var includeFiles bool
 	fs.StringVar(&file, "file", "", "путь к .env-файлу (обязателен)")
+	fs.BoolVar(&includeFiles, "include-files", false, "писать в .env и файловые (kind: file) ключи — по умолчанию пропускаются")
 	getEnv := addEnvFlag(fs)
 	_ = fs.Parse(rest)
 	proj, _ := resolveServiceProj(service, fs, getEnv())
@@ -416,17 +459,21 @@ func exportCommand(args []string) int {
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "# сгенерировано sec из проекта %s — не коммитить\n", proj)
-	var written, binSkipped []string
+	var written, binSkipped, fileSkipped []string
 	for _, k := range store.SortedKeys(keys) {
-		if keys[k].IsBinary() { // бинарный файл в .env не лезет — доставать get --out
+		switch {
+		case keys[k].IsBinary(): // бинарный файл в .env не лезет — доставать get --out
 			binSkipped = append(binSkipped, k)
-			continue
+		case !includeFiles && keys[k].IsFile(): // текстовый kind: file — не env-значение, а файл
+			fileSkipped = append(fileSkipped, k)
+		default:
+			b.WriteString(dotenv.Line(k, keys[k].Value) + "\n")
+			written = append(written, k)
 		}
-		b.WriteString(dotenv.Line(k, keys[k].Value) + "\n")
-		written = append(written, k)
 	}
 	if len(written) == 0 {
-		die("в %s только бинарные (файловые) ключи — .env не из чего собрать (sec get %s --out <файл>)", proj, store.RefToCLI(proj+"/<KEY>"))
+		die("в %s только файловые ключи — .env не из чего собрать (--include-files впишет текстовые; sec get %s --out <файл>)",
+			proj, store.RefToCLI(proj+"/<KEY>"))
 	}
 	if err := writeSecretFile(file, []byte(b.String())); err != nil {
 		die("запись %s: %v", file, err)
@@ -434,6 +481,10 @@ func exportCommand(args []string) int {
 	if len(binSkipped) > 0 {
 		fmt.Fprintf(os.Stderr, "sec: бинарные (файловые) ключи в .env не пишутся, пропущены: %s (sec get %s --out)\n",
 			strings.Join(binSkipped, ", "), store.RefToCLI(proj+"/<KEY>"))
+	}
+	if len(fileSkipped) > 0 {
+		fmt.Fprintf(os.Stderr, "sec: файловые (kind: file) ключи пропущены: %s (--include-files впишет; файлом: sec get %s --out)\n",
+			strings.Join(fileSkipped, ", "), store.RefToCLI(proj+"/<KEY>"))
 	}
 	audit.Record("export", proj, "→ "+file)
 	fmt.Printf("записан %s (0600): %s\n", file, strings.Join(written, ", "))

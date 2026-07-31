@@ -136,17 +136,23 @@ func mustSecret(st *store.Store, proj, key string) store.Secret {
 // selectKeys собирает KEY→VALUE проекта: все ключи или только перечисленные в
 // only (через запятую). Отсутствие запрошенного ключа — фатально (run/push).
 // Бинарные (файловые) значения в env/Infisical не отдаются: без only — молча
-// пропускаются с предупреждением, запрошенные явно — фатально.
-func selectKeys(keys map[string]store.Secret, only, projLabel string) map[string]string {
+// пропускаются с предупреждением, запрошенные явно — фатально. Текстовые
+// файловые (kind: file) без includeFiles тоже пропускаются: env копируется
+// каждому дочернему процессу и упирается в ARG_MAX — многокилобайтный PEM там
+// не нужен, а нужен обычно путь (run --file). Явное имя в only — инжектится.
+func selectKeys(keys map[string]store.Secret, only, projLabel string, includeFiles bool) map[string]string {
 	out := map[string]string{}
 	if only == "" {
-		var binSkipped []string
+		var binSkipped, fileSkipped []string
 		for k, s := range keys {
-			if s.IsBinary() {
+			switch {
+			case s.IsBinary():
 				binSkipped = append(binSkipped, k)
-				continue
+			case !includeFiles && s.IsFile():
+				fileSkipped = append(fileSkipped, k)
+			default:
+				out[k] = s.Value
 			}
-			out[k] = s.Value
 		}
 		if len(binSkipped) > 0 {
 			sort.Strings(binSkipped)
@@ -154,6 +160,11 @@ func selectKeys(keys map[string]store.Secret, only, projLabel string) map[string
 			// "service/<KEY> -e env", иначе команду нельзя скопировать и выполнить
 			fmt.Fprintf(os.Stderr, "sec: бинарные (файловые) ключи пропущены: %s (доставать: sec get %s --out <файл>)\n",
 				strings.Join(binSkipped, ", "), store.RefToCLI(projLabel+"/<KEY>"))
+		}
+		if len(fileSkipped) > 0 {
+			sort.Strings(fileSkipped)
+			fmt.Fprintf(os.Stderr, "sec: файловые (kind: file) ключи в env не инжектятся: %s (путь к файлу — run --file <KEY>; значение в env — --include-files или --only)\n",
+				strings.Join(fileSkipped, ", "))
 		}
 		return out
 	}
@@ -189,6 +200,22 @@ func addEnvFlag(fs *flag.FlagSet) func() string {
 	}
 }
 
+// defaultBareFlag подставляет def после голого -name/--name (без значения в
+// хвосте или перед следующим флагом): стандартный flag у строковых флагов
+// опциональных значений не умеет — «-out --peek» съел бы --peek как значение.
+func defaultBareFlag(args []string, name, def string) []string {
+	out := make([]string, 0, len(args)+1)
+	for i, a := range args {
+		out = append(out, a)
+		if a == "-"+name || a == "--"+name {
+			if i+1 >= len(args) || strings.HasPrefix(args[i+1], "-") {
+				out = append(out, def)
+			}
+		}
+	}
+	return out
+}
+
 // splitArgs выделяет первый позиционный аргумент до флагов (как prod-db),
 // чтобы работало и `cmd proj --flag`, и `cmd --flag proj`.
 func splitArgs(args []string) (string, []string) {
@@ -207,14 +234,15 @@ Windows Credential Manager (fallback: env SEC_KEY / файл).
   sec set <proj>/<KEY>                 сохранить (скрытый ввод, дважды)
   sec set <proj>/<KEY> --clipboard     взять значение из буфера обмена
   cat token.txt | sec set <proj>/<KEY> значение из stdin
-  sec set <proj>/<KEY> --from-file <f> сохранить файл (сертификат/ключ; бинарные — в base64)
+  sec set <proj>/<KEY> --from-file <f> сохранить файл (сертификат/ключ; бинарные — в base64, лимит 4 МиБ)
   sec gen <proj>/<KEY> [--len 32]      сгенерировать и сохранить, не показывая
   sec get <proj>/<KEY> [--clip]        показать (или молча в буфер)
   sec get <proj>/<KEY> --peek          маска ab…yz + длина (безопасно для чата)
   sec get <proj>/<KEY> --fingerprint   отпечаток fp:… (безопасно для чата)
   sec get <proj>/<KEY> --prev 1        показать предыдущее значение
   sec get <proj>/<KEY> --once          показать и сразу удалить (одноразовая передача)
-  sec get <proj>/<KEY> --out <файл>    записать значение в файл 0600 (файловые/бинарные)
+  sec get <proj>/<KEY> --out [файл]    записать значение в файл (файловые/бинарные);
+                                       без пути — в текущую папку под исходным именем
   sec verify <proj>/<KEY>              сверить переданное значение с сохранённым
   sec history <proj>/<KEY> [--json]    версии значения (маскированно, до 5, +redo)
   sec undo <proj>/<KEY>                шаг назад по истории (redo вернёт вперёд)
@@ -234,6 +262,7 @@ Windows Credential Manager (fallback: env SEC_KEY / файл).
   sec rm <proj>/<KEY>                  удалить ключ
   sec rm <proj> --all                  удалить проект целиком
   sec run [proj] [--only A,B] -- cmd   запустить cmd с env из проекта
+  sec run [proj] --file <KEY> -- cmd   + файловый секрет во временный файл на время cmd
   sec export [proj] --file .env        записать .env (только в файл)
   sec import [proj] [path/to/.env|-]   импортировать ключи из .env (умолч. ./.env)
   sec import [proj] '{"KEY":"…"}'      импортировать из JSON (файл, stdin, буфер, аргумент)
@@ -281,6 +310,20 @@ Windows Credential Manager (fallback: env SEC_KEY / файл).
   --clipboard   взять значение из буфера обмена
   --clear       очистить буфер после сохранения (вместе с --clipboard)
   --stdin       читать из stdin (включается и само, если stdin — пайп)
+
+Файловые секреты (set --from-file, kind: file):
+  Хранятся байт-в-байт (бинарные — base64, лимит 4 МиБ), помнят имя и права
+  исходного файла. В env-инъекцию run/export по умолчанию НЕ попадают — env
+  копируется каждому дочернему процессу и упирается в ARG_MAX; вернуть старое
+  поведение: --include-files, либо явно --only <KEY>. Потребление:
+    sec get <proj>/<KEY> --out [файл|каталог]   достать файлом (исходные права;
+                                                без пути — ./<исходное имя>)
+    sec run <proj> --file [ENV=]<KEY|proj2/KEY>[:путь] -- cmd
+  --file кладёт секрет во временный файл 0600 (умолч. — приватный tmp-каталог,
+  исходное имя), отдаёт путь в env-переменной ENV (умолч. — имя ключа) и
+  удаляет файл после завершения команды. Голый KEY берётся из проекта запуска,
+  proj2/KEY — из другой пачки (например tauri-keys). Флаг повторяемый:
+    sec run sql-kai --file TAURI_SIGNING_PRIVATE_KEY=tauri-keys/APP_PEM -- ./release.sh
 
 Флаги gen: --len N (умолч. 32), --symbols (добавить спецсимволы), --clip
 

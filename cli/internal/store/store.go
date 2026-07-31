@@ -50,6 +50,7 @@ type Meta struct {
 	Note        string `json:"note,omitempty"`
 	Kind        string `json:"kind,omitempty"`        // password | apikey | totp | file | env | ...
 	Filename    string `json:"filename,omitempty"`    // имя исходного файла (set --from-file)
+	FileMode    string `json:"fileMode,omitempty"`    // исходные права файла восьмерично ("0644"); версию стора не бампаем — потеря поля старым бинарём безвредна (get --out откатится к 0600)
 	RotateURL   string `json:"rotateUrl,omitempty"`   // где крутить секрет
 	RotateEvery string `json:"rotateEvery,omitempty"` // человекочитаемый интервал, напр. "90d"
 	ExpiresAt   string `json:"expiresAt,omitempty"`   // RFC3339, дедлайн ротации
@@ -68,6 +69,13 @@ type Secret struct {
 // IsBinary — значение бинарное (файловый секрет): в env/шаблон/буфер его не
 // отдать, доставать только файлом (get --out).
 func (s Secret) IsBinary() bool { return s.Enc == EncB64 }
+
+// IsFile — файловый секрет: бинарное значение либо kind=file в метаданных
+// (текстовые PEM/сертификаты). В env-инъекцию run/export по умолчанию не
+// попадает — потреблять через run --file / get --out.
+func (s Secret) IsFile() bool {
+	return s.Enc == EncB64 || (s.Meta != nil && s.Meta.Kind == "file")
+}
 
 // Bytes — сырые байты значения: для бинарных — декодированный base64,
 // для текста — байты строки как есть.

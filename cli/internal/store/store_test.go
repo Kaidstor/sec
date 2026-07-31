@@ -272,3 +272,22 @@ func TestSaveStampsCurrentVersion(t *testing.T) {
 		t.Errorf("Version = %d, ожидалась %d", got.Version, storeVersion)
 	}
 }
+
+// IsFile шире IsBinary: файловым считается и текстовый секрет с kind=file
+// (PEM), и бинарный без всяких метаданных.
+func TestIsFile(t *testing.T) {
+	cases := []struct {
+		s    Secret
+		want bool
+	}{
+		{Secret{Value: "v"}, false},
+		{Secret{Value: "v", Meta: &Meta{Kind: "password"}}, false},
+		{Secret{Value: "v", Meta: &Meta{Kind: "file"}}, true},
+		{Secret{Value: "QUFBQQ==", Enc: EncB64}, true},
+	}
+	for i, c := range cases {
+		if got := c.s.IsFile(); got != c.want {
+			t.Errorf("case %d: IsFile() = %v, ожидалось %v", i, got, c.want)
+		}
+	}
+}

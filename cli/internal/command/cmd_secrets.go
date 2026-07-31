@@ -47,7 +47,7 @@ func setCommand(args []string) int {
 		mustEditable(st0, proj, key, override)
 	}
 
-	var val, enc, fileName string
+	var val, enc, fileName, fileMode string
 	var err error
 	src := "скрытый ввод"
 	switch {
@@ -91,6 +91,7 @@ func setCommand(args []string) int {
 			die("файл %s пуст, ничего не сохранено", fromFile)
 		}
 		fileName = filepath.Base(fromFile)
+		fileMode = fmt.Sprintf("%04o", fi.Mode().Perm())
 		src = "файл " + fileName
 		if isBinaryData(data) {
 			val, enc = base64.StdEncoding.EncodeToString(data), store.EncB64
@@ -146,7 +147,7 @@ func setCommand(args []string) int {
 	existed := store.PutEnc(keys, key, val, enc)
 	applyMetaFlags(keys, key, note, kind)
 	if fileName != "" {
-		applyFileMeta(keys, key, fileName)
+		applyFileMeta(keys, key, fileName, fileMode)
 	} else {
 		clearFileMeta(keys, key) // текст поверх файлового секрета — прежнее имя файла больше не о нём
 	}
@@ -180,8 +181,9 @@ func isBinaryData(data []byte) bool {
 }
 
 // applyFileMeta помечает ключ файловым: имя исходного файла (для get --out в
-// каталог) и kind=file, если тип не задан явно.
-func applyFileMeta(keys map[string]store.Secret, key, fileName string) {
+// каталог), его права (get --out их восстановит) и kind=file, если тип не
+// задан явно.
+func applyFileMeta(keys map[string]store.Secret, key, fileName, fileMode string) {
 	e := keys[key]
 	m := store.Meta{}
 	if e.Meta != nil {
@@ -191,6 +193,7 @@ func applyFileMeta(keys map[string]store.Secret, key, fileName string) {
 		m.Kind = "file"
 	}
 	m.Filename = fileName
+	m.FileMode = fileMode
 	e.Meta = &m
 	keys[key] = e
 }
@@ -205,6 +208,7 @@ func clearFileMeta(keys map[string]store.Secret, key string) {
 	}
 	m := *e.Meta
 	m.Filename = ""
+	m.FileMode = ""
 	if m.Kind == "file" {
 		m.Kind = ""
 	}
@@ -301,9 +305,12 @@ func getCommand(args []string) int {
 	fs.BoolVar(&once, "once", false, "показать значение и сразу удалить ключ (одноразовая передача)")
 	var clearAfter, outFile string
 	fs.StringVar(&clearAfter, "clear-after", "", "с --clip: очистить буфер через интервал (напр. 20s), если не перезаписан")
-	fs.StringVar(&outFile, "out", "", "записать значение в файл 0600 (единственный способ достать бинарные)")
+	fs.StringVar(&outFile, "out", "", "записать значение в файл 0600 (единственный способ достать бинарные); без пути — в текущую папку под исходным именем")
 	fs.IntVar(&prevN, "prev", 0, "показать N-е предыдущее значение (1 = прошлое)")
 	getEnv := addEnvFlag(fs)
+	// голый --out (без пути) — «сюда, под исходным именем»: стандартный flag
+	// опциональных значений не умеет, подставляем "." сами
+	rest = defaultBareFlag(rest, "out", ".")
 	_ = fs.Parse(rest)
 	proj, key := resolveKeyRef(ref, fs, getEnv(), "sec get <proj>/<KEY>")
 
@@ -351,8 +358,18 @@ func getCommand(args []string) int {
 		if werr := writeSecretFile(target, raw); werr != nil {
 			die("запись %s: %v", target, werr)
 		}
+		modeLabel := "0600"
+		if _, _, isRemote := splitRemoteTarget(target); !isRemote {
+			// исходные права файла (set --from-file) — для .pub/конфигов 0600 не то;
+			// по ssh не восстанавливаем: там фиксированный chmod 600 (remote.go)
+			if mode, ok := storedFileMode(sec); ok && mode != 0o600 {
+				if cerr := os.Chmod(target, mode); cerr == nil {
+					modeLabel = fmt.Sprintf("%04o, исходные права", mode)
+				}
+			}
+		}
 		audit.Record("get", proj+"/"+key, strings.Replace(detail, "показано", "→ файл "+target, 1))
-		fmt.Printf("записан %s (0600, %d байт) — файл вне шифрованного стора, не коммить\n", target, len(raw))
+		fmt.Printf("записан %s (%s, %d байт) — файл вне шифрованного стора, не коммить\n", target, modeLabel, len(raw))
 		return 0
 	}
 	isBin := enc == store.EncB64
