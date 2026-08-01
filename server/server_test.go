@@ -276,6 +276,19 @@ func TestHealthz(t *testing.T) {
 	}
 }
 
+func TestFavicon(t *testing.T) {
+	_, mux, _ := newTestServer(t)
+	w := do(mux, "GET", "/favicon.svg", "", nil)
+	if w.Code != http.StatusOK || w.Header().Get("Content-Type") != "image/svg+xml" {
+		t.Fatalf("favicon: %d %q", w.Code, w.Header().Get("Content-Type"))
+	}
+	// иконка — ресурс страницы: без img-src строгий CSP её заблокирует
+	page := do(mux, "GET", "/", "", nil).Header().Get("Content-Security-Policy")
+	if !strings.Contains(page, "img-src 'self'") {
+		t.Fatalf("CSP корня без img-src: %q", page)
+	}
+}
+
 func TestIndexPage(t *testing.T) {
 	_, mux, _ := newTestServer(t)
 	w := do(mux, "GET", "/", "", nil)

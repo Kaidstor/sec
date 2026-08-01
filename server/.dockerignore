@@ -1,0 +1,7 @@
+data/
+*.tar
+deploy.sh
+compose.yml
+README.md
+Dockerfile
+.dockerignore
