@@ -75,9 +75,13 @@ homebrew_casks:
     commit_author:
       name: goreleaser
       email: goreleaser@users.noreply.github.com
-    # неподписанный бинарь: снимаем карантин, иначе Gatekeeper блокирует запуск
+    # Неподписанный бинарь: снимаем карантин, иначе Gatekeeper блокирует запуск.
+    # Именно preflight, а не postflight: generate_completions_from_executable
+    # запускает `sec completion …` из staged_path на этапе artifacts — то есть
+    # ДО postflight; с карантином этот запуск падает диалогом Gatekeeper, и
+    # установка остаётся без автодополнений и без снятого карантина.
     hooks:
-      post:
+      pre:
         install: |
           if OS.mac?
             system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/sec"]
