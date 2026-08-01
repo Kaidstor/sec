@@ -95,6 +95,9 @@ sec scan --staged
   сервер хранит только шифротекст; ключ — во фрагменте URL, расшифровка — в
   браузере получателя. Self-hosted сервер — [`server/`](server/), готовый
   инстанс: `sec share setup <url>` с токеном, выпущенным на сервере.
+  Как это устроено внутри —
+  [«sec share: одноразовые ссылки»](https://notes.kaidstor.ru/6982ea92-d6d2-4183-baf4-37d9c8e3acd5)
+  ([`docs/share.md`](docs/share.md)).
 - **Перенос и синхронизация** — `backup` / `restore` / `sync` (переносимый блоб
   под passphrase), `rekey` (ротация мастер-ключа), мост с **Infisical**.
 - **Автодополнение** — `sec completion zsh|bash|fish`: динамическое дополнение
