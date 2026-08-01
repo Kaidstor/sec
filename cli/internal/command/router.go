@@ -269,6 +269,11 @@ Windows Credential Manager (fallback: env SEC_KEY / файл).
   sec import [proj] --from-infisical   импортировать из Infisical (их CLI)
   sec push [proj] --to-infisical       отправить ключи проекта в Infisical
   sec check [proj] [--file .sec]       проверить, что заведены ключи из манифеста
+  sec share <proj>/<KEY> [--ttl 24h]   одноразовая ссылка на секрет: шифруется локально,
+                                       ключ — в URL-фрагменте, сервер видит только шифротекст
+  sec share - | --file <путь>          поделиться значением со stdin / файлом с диска
+  sec share ls | revoke <id|url>       активные ссылки / досрочно отозвать
+  sec share setup <url>                подключить сервер ссылок (токен — скрытым вводом)
   sec scan <path...|-|--staged>        найти сохранённые значения в файлах/диффе
   sec redact <path...|->                вычистить сохранённые значения из текста → stdout
   sec render <tpl> --file <out>        шаблон с {{ secret "proj/KEY" }} → файл
@@ -341,6 +346,14 @@ Windows Credential Manager (fallback: env SEC_KEY / файл).
   SEC_KEY_FILE    путь к файлу мастер-ключа (умолч. ~/.config/sec/key,
                   Windows: %APPDATA%\sec\key)
   SEC_PASSPHRASE  passphrase для backup/restore без интерактива
+  SEC_SHARE_URL   адрес сервера ссылок — поверх сохранённого (sec share setup)
+  SEC_SHARE_TOKEN токен сервера ссылок — поверх сохранённого
+
+Ссылки-шаринг (sec share): значение шифруется локально (AES-256-GCM), на
+сервер уходит только шифротекст; ключ расшифровки — во фрагменте URL, который
+браузер серверу не отправляет. Ссылка по умолчанию одноразовая (--multi —
+многоразовая) и живёт --ttl (1h…7d, умолч. 24h) — сгорает по первому из
+событий. URL целиком = секрет: канал передачи выбирай как для пароля.
 `
 
 // Run — точка входа CLI: разбирает args (без имени программы), маршрутизирует
@@ -402,6 +415,8 @@ func Run(args []string) int {
 		return checkCommand(args[1:])
 	case "scan":
 		return scanCommand(args[1:])
+	case "share":
+		return shareCommand(args[1:])
 	case "redact":
 		return redactCommand(args[1:])
 	case "rekey":

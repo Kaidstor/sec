@@ -80,6 +80,13 @@ echo "→ проверки (gofmt, vet, test)…"
   go vet ./... || die "go vet упал"
   go test ./... || die "тесты упали"
 ) || exit 1
+(
+  cd server
+  bad="$(gofmt -l . || true)"
+  [ -z "$bad" ] || { printf '%s\n' "$bad"; die "gofmt: есть неотформатированные файлы (gofmt -w server)"; }
+  go vet ./... || die "go vet (server) упал"
+  go test ./... || die "тесты server упали"
+) || exit 1
 
 # --- опциональный локальный goreleaser check (не блокирует: итоговый гейт — CI;
 #     на текущем goreleaser check строг к deprecated-ключам, но релиз собирается) ---

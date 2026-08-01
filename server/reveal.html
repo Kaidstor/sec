@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>sec share — вам передали секрет</title>
+<style>
+  :root{
+    --bg:#f7f8fa; --panel:#ffffff; --ink:#1a1d24; --muted:#5b6472;
+    --line:#e5e8ee; --accent:#0f766e; --accent-soft:#0f766e14;
+    --code-bg:#f2f4f7; --code-ink:#0b3d39;
+    --warn:#9a3412; --warn-bg:#9a341214;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --bg:#0d1117; --panel:#161b22; --ink:#e6edf3; --muted:#9098a5;
+      --line:#232a34; --accent:#2dd4bf; --accent-soft:#2dd4bf1a;
+      --code-bg:#0b0f14; --code-ink:#7fe9dd;
+      --warn:#fca5a5; --warn-bg:#fca5a512;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#0d1117; --panel:#161b22; --ink:#e6edf3; --muted:#9098a5;
+    --line:#232a34; --accent:#2dd4bf; --accent-soft:#2dd4bf1a;
+    --code-bg:#0b0f14; --code-ink:#7fe9dd;
+    --warn:#fca5a5; --warn-bg:#fca5a512;
+  }
+  :root[data-theme="light"]{
+    --bg:#f7f8fa; --panel:#ffffff; --ink:#1a1d24; --muted:#5b6472;
+    --line:#e5e8ee; --accent:#0f766e; --accent-soft:#0f766e14;
+    --code-bg:#f2f4f7; --code-ink:#0b3d39;
+    --warn:#9a3412; --warn-bg:#9a341214;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;}
+  .wrap{max-width:640px;margin:0 auto;padding:0 20px 60px}
+  header{padding:48px 0 24px}
+  .logo{display:inline-flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+  .logo h1{font:800 34px/1 var(--mono);letter-spacing:-1px;margin:0}
+  .logo .dot{color:var(--accent)}
+  .tag{color:var(--muted);font-size:15px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px}
+  .card p{margin:0 0 12px}
+  .muted{color:var(--muted);font-size:14px}
+  .warnbox{border-left:3px solid var(--warn);background:var(--warn-bg);
+    padding:10px 14px;border-radius:0 10px 10px 0;font-size:14.5px;margin:0 0 16px}
+  button{font:600 15px/1 inherit;border:0;border-radius:10px;padding:13px 18px;cursor:pointer}
+  #reveal{background:var(--accent);color:#fff;width:100%}
+  #reveal:disabled{opacity:.6;cursor:default}
+  .actions{display:flex;gap:10px;margin-top:12px;flex-wrap:wrap}
+  .actions button,.actions a{background:var(--accent-soft);color:var(--accent);
+    border:1px solid var(--line);border-radius:10px;padding:10px 16px;
+    font:600 14px/1 inherit;text-decoration:none;cursor:pointer;display:inline-block}
+  pre{font-family:var(--mono);font-size:13.5px;line-height:1.55;background:var(--code-bg);
+    color:var(--code-ink);border-radius:10px;padding:14px;margin:0;
+    white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-all;max-height:50vh;overflow-y:auto}
+  .file{display:flex;align-items:center;gap:10px;background:var(--code-bg);
+    border-radius:10px;padding:14px;font-family:var(--mono);font-size:14px;color:var(--code-ink)}
+  #error{border-left:3px solid var(--warn);background:var(--warn-bg);color:var(--warn);
+    padding:12px 16px;border-radius:0 10px 10px 0;margin:0}
+  .toggle{position:fixed;top:16px;right:16px;background:var(--panel);border:1px solid var(--line);
+    color:var(--muted);border-radius:10px;padding:7px 11px;font-size:13px;cursor:pointer}
+  footer{margin-top:36px;color:var(--muted);font-size:13px}
+  footer a{color:var(--accent)}
+  [hidden]{display:none !important}
+</style>
+</head>
+<body>
+<button class="toggle" onclick="(function(){var r=document.documentElement;var d=(r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light'))==='dark';r.setAttribute('data-theme',d?'light':'dark');})()">◐ тема</button>
+<div class="wrap">
+
+<header>
+  <div class="logo"><h1>sec<span class="dot">.</span></h1><span class="tag">вам передали секрет</span></div>
+</header>
+
+<div class="card">
+  <div id="ask">
+    <p>Содержимое зашифровано: сервер его не видит, ключ расшифровки — в самой ссылке
+       и расшифровка произойдёт в вашем браузере.</p>
+    <p class="warnbox">Ссылка может быть одноразовой — секрет показывается один раз.
+       Не закрывайте страницу, пока не сохраните значение.</p>
+    <button id="reveal">Показать секрет</button>
+  </div>
+
+  <div id="result" hidden>
+    <pre id="secret" hidden></pre>
+    <div class="file" id="fileinfo" hidden>📄 <span id="filename"></span> <span class="muted" id="filesize"></span></div>
+    <div class="actions">
+      <button id="copy" hidden>Скопировать</button>
+      <a id="download" hidden>Скачать файл</a>
+    </div>
+    <p id="burned" class="muted" hidden style="margin-top:12px">
+      Ссылка сгорела — повторно открыть её нельзя. Сохраните значение сейчас.</p>
+  </div>
+
+  <p id="error" hidden></p>
+</div>
+
+<footer>zero-knowledge: сервер хранит только шифротекст, расшифровка — WebCrypto в браузере ·
+  <a href="https://github.com/kaidstor/sec">sec</a></footer>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  var MAGIC = "secshare", HEADER = 9, NONCE = 12;
+  var $ = function(id){ return document.getElementById(id); };
+
+  function b64std(s){
+    var bin = atob(s), out = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+  function b64url(s){
+    s = s.replace(/-/g, "+").replace(/_/g, "/");
+    while (s.length % 4) s += "=";
+    return b64std(s);
+  }
+
+  async function claimAndDecrypt(){
+    var id = location.pathname.split("/").filter(Boolean).pop();
+    var keyB64 = location.hash.slice(1);
+    if (!keyB64) throw new Error("В ссылке нет ключа расшифровки — похоже, она скопирована не целиком (часть после # обязательна).");
+    var key;
+    try { key = b64url(keyB64); } catch (e) { throw new Error("Ключ в ссылке повреждён."); }
+    if (key.length !== 32) throw new Error("Ключ в ссылке повреждён (неверная длина).");
+    // все проверки — ДО claim: неудачная попытка не должна сжечь одноразовую
+    // ссылку; WebCrypto вне HTTPS/localhost недоступен
+    if (!(window.isSecureContext && window.crypto && crypto.subtle))
+      throw new Error("Браузер не даёт расшифровать вне HTTPS (WebCrypto недоступен) — откройте ссылку по https. Секрет не тронут.");
+
+    var resp = await fetch("/api/v1/secrets/" + encodeURIComponent(id) + "/claim", {method: "POST"});
+    if (resp.status === 404) throw new Error("Ссылка не существует, уже открыта или истекла.");
+    if (resp.status === 429) throw new Error("Слишком много попыток — подождите минуту и обновите страницу.");
+    if (!resp.ok) throw new Error("Сервер ответил ошибкой (" + resp.status + ").");
+    var body = await resp.json();
+
+    var blob = b64std(body.blob);
+    var head = new TextDecoder().decode(blob.slice(0, MAGIC.length));
+    if (head !== MAGIC || blob[MAGIC.length] !== 1) throw new Error("Неизвестный формат данных.");
+
+    var cryptoKey = await crypto.subtle.importKey("raw", key, {name: "AES-GCM"}, false, ["decrypt"]);
+    var plain;
+    try {
+      plain = await crypto.subtle.decrypt(
+        {name: "AES-GCM", iv: blob.slice(HEADER, HEADER + NONCE), additionalData: blob.slice(0, HEADER)},
+        cryptoKey, blob.slice(HEADER + NONCE));
+    } catch (e) {
+      throw new Error("Расшифровка не удалась — ключ в ссылке не подходит к данным.");
+    }
+    var env = JSON.parse(new TextDecoder().decode(plain));
+    if (env.v !== 1) throw new Error("Неизвестная версия конверта.");
+    return {env: env, data: b64std(env.data || ""), once: body.once};
+  }
+
+  function show(res){
+    $("ask").hidden = true;
+    $("result").hidden = false;
+    if (res.once) $("burned").hidden = false;
+    if (res.env.type === "file"){
+      var name = res.env.filename || "secret";
+      $("fileinfo").hidden = false;
+      $("filename").textContent = name;
+      $("filesize").textContent = "(" + res.data.length + " байт)";
+      var a = $("download");
+      a.href = URL.createObjectURL(new Blob([res.data], {type: "application/octet-stream"}));
+      a.download = name;
+      a.hidden = false;
+      return;
+    }
+    var text = new TextDecoder().decode(res.data);
+    $("secret").textContent = text;
+    $("secret").hidden = false;
+    var copy = $("copy");
+    copy.hidden = false;
+    copy.onclick = function(){
+      navigator.clipboard.writeText(text).then(function(){
+        copy.textContent = "Скопировано ✓";
+        setTimeout(function(){ copy.textContent = "Скопировать"; }, 2000);
+      }).catch(function(){
+        copy.textContent = "Не вышло — выделите текст вручную";
+      });
+    };
+  }
+
+  $("reveal").onclick = function(){
+    var btn = $("reveal");
+    btn.disabled = true;
+    btn.textContent = "Расшифровываю…";
+    claimAndDecrypt().then(show).catch(function(e){
+      $("ask").hidden = true;
+      var err = $("error");
+      err.textContent = e.message || String(e);
+      err.hidden = false;
+    });
+  };
+})();
+</script>
+</body>
+</html>

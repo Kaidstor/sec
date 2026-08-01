@@ -1,0 +1,26 @@
+services:
+  sec-share:
+    # Образ приезжает готовым (deploy.sh: build → save → load), исходников на
+    # сервере нет — build-контекста здесь быть не должно.
+    image: sec-share:latest
+    container_name: sec-share
+    restart: unless-stopped
+    environment:
+      SEC_SHARE_DATA: /data
+    volumes:
+      - ./data:/data
+    networks:
+      - vpn
+    # Роутинг через docker-провайдер traefik (exposedByDefault: false), общий
+    # /app/traefik/dynamic.yml не трогаем — от него зависят остальные сайты.
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=vpn
+      - traefik.http.routers.sec-share.rule=Host(`share.kaidstor.ru`)
+      - traefik.http.routers.sec-share.entrypoints=websecure
+      - traefik.http.routers.sec-share.tls.certresolver=myresolver
+      - traefik.http.services.sec-share.loadbalancer.server.port=8080
+
+networks:
+  vpn:
+    external: true

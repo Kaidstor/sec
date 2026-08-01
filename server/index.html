@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>sec share — одноразовые зашифрованные ссылки</title>
+<style>
+  :root{
+    --bg:#f7f8fa; --panel:#ffffff; --ink:#1a1d24; --muted:#5b6472;
+    --line:#e5e8ee; --accent:#0f766e; --accent-soft:#0f766e14;
+    --code-bg:#f2f4f7; --code-ink:#0b3d39;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --bg:#0d1117; --panel:#161b22; --ink:#e6edf3; --muted:#9098a5;
+      --line:#232a34; --accent:#2dd4bf; --accent-soft:#2dd4bf1a;
+      --code-bg:#0b0f14; --code-ink:#7fe9dd;
+    }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;}
+  .wrap{max-width:640px;margin:0 auto;padding:0 20px 60px}
+  header{padding:48px 0 24px}
+  .logo{display:inline-flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+  .logo h1{font:800 34px/1 var(--mono);letter-spacing:-1px;margin:0}
+  .logo .dot{color:var(--accent)}
+  .tag{color:var(--muted);font-size:15px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px}
+  .card p{margin:0 0 12px}
+  .card p:last-child{margin:0}
+  code{font-family:var(--mono);font-size:.88em;background:var(--code-bg);
+    color:var(--code-ink);padding:1px 6px;border-radius:5px}
+  a{color:var(--accent)}
+  footer{margin-top:36px;color:var(--muted);font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="logo"><h1>sec<span class="dot">.</span></h1><span class="tag">одноразовые зашифрованные ссылки</span></div>
+</header>
+<div class="card">
+  <p>Сюда попадают по ссылкам вида <code>/s/&lt;id&gt;#&lt;ключ&gt;</code> — их создаёт
+     CLI <a href="https://github.com/kaidstor/sec">sec</a> командой <code>sec share</code>.</p>
+  <p>Секрет шифруется на машине отправителя, сервер хранит только шифротекст.
+     Ключ расшифровки живёт во фрагменте ссылки и серверу не отправляется —
+     расшифровка происходит в браузере получателя. Ссылка сгорает при первом
+     открытии или по истечении срока.</p>
+</div>
+<footer>zero-knowledge · только для ссылок, созданных владельцами токенов</footer>
+</div>
+</body>
+</html>

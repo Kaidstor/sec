@@ -320,6 +320,13 @@ sec extend findler --from shared                  # findler видит все к
 sec get whois/API_TOKEN --once                    # показать и удалить
 sec get whois/ADMIN_PASS --clip --clear-after 20s # в буфер, сотрётся через 20с
 
+# передать секрет человеку по одноразовой ссылке (URL печатать можно — это цель;
+# значение шифруется локально, сервер видит только шифротекст)
+sec share whois/DB_PASSWORD                       # одноразовая, TTL 24h
+sec share infra/server.p12 --ttl 3d               # файловый секрет — получатель скачает
+openssl rand -hex 32 | sec share -                # ad-hoc значение, в стор не попадает
+sec share ls && sec share revoke <id|url>         # активные ссылки / отозвать
+
 # синхронизация между машинами через общий зашифрованный блоб
 sec sync --file ~/Dropbox/sec.enc     # merge из блоба + push обратно
 

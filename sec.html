@@ -134,6 +134,24 @@
   </div>
 </div>
 
+<h2>Поделиться по ссылке <span class="badge">zero-knowledge</span></h2>
+<div class="grid">
+  <div class="card">
+    <div class="head"><h3>share — одноразовая ссылка</h3></div>
+    <div class="cmd"><code>sec share whois/DB_PASSWORD</code><div class="d">ссылка сгорает при первом открытии или через 24ч</div></div>
+    <div class="cmd"><code>sec share infra/server.p12 --ttl 3d</code><div class="d">файловый секрет — получатель скачает файл</div></div>
+    <div class="cmd"><code>openssl rand -hex 32 | sec share -</code><div class="d">значение со stdin, в стор не попадает</div></div>
+    <div class="cmd"><code>sec share ls&nbsp;&nbsp;·&nbsp;&nbsp;sec share revoke &lt;id|url&gt;</code><div class="d">активные ссылки / досрочно отозвать</div></div>
+  </div>
+  <div class="card">
+    <div class="head"><h3>как это устроено</h3></div>
+    <div class="cmd"><code>https://…/s/&lt;id&gt;#&lt;ключ&gt;</code><div class="d">шифруется локально (AES‑256‑GCM); ключ — во фрагменте URL,
+      браузер его серверу не отправляет — сервер хранит только шифротекст</div></div>
+    <div class="cmd"><code>sec share setup https://share.…</code><div class="d">подключить свой сервер (папка server/ в репо): создание — по токену, чтение — по ссылке</div></div>
+    <div class="cmd"><code>&nbsp;</code><div class="d">раскрытие — по явному клику на странице: превью‑боты мессенджеров ссылку не сжигают</div></div>
+  </div>
+</div>
+
 <h2>Свериться, не раскрывая значение</h2>
 <div class="grid">
   <div class="card">

@@ -105,3 +105,26 @@ func TestCompleteNilStore(t *testing.T) {
 		t.Errorf("флаги должны работать без стора: %v", got)
 	}
 }
+
+func TestCompleteShare(t *testing.T) {
+	st := completionTestStore()
+	// первое слово share предлагается среди подкоманд
+	if got := completeCandidates(nil, []string{"sh"}); !hasCand(got, "share") {
+		t.Errorf("share не предложен как подкоманда: %v", got)
+	}
+	// первый аргумент — смесь сабкоманд и ссылок proj/KEY
+	got := completeCandidates(st, []string{"share", ""})
+	for _, want := range []string{"setup", "ls", "revoke", "whois/"} {
+		if !hasCand(got, want) {
+			t.Errorf("%q не предложен после share: %v", want, got)
+		}
+	}
+	// после слэша — ключи проекта
+	if got := completeCandidates(st, []string{"share", "whois/"}); !hasCand(got, "whois/API_TOKEN") {
+		t.Errorf("ключи проекта не предложены: %v", got)
+	}
+	// флаги share
+	if got := completeCandidates(st, []string{"share", "whois/API_TOKEN", "--"}); !hasCand(got, "--ttl") || !hasCand(got, "--multi") {
+		t.Errorf("флаги share не предложены: %v", got)
+	}
+}

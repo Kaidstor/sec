@@ -23,7 +23,7 @@ var completionSubcommands = []string{
 	"set", "gen", "get", "verify", "history", "undo", "redo", "forget",
 	"meta", "otp", "ls", "find", "diff", "mv", "cp", "link", "unlink", "extend",
 	"rm", "run", "export", "import", "push", "check", "scan", "redact",
-	"render", "stale", "doctor", "backup", "restore", "sync", "rekey",
+	"render", "share", "stale", "doctor", "backup", "restore", "sync", "rekey",
 	"log", "info", "completion", "version", "help",
 }
 
@@ -77,6 +77,7 @@ var completionFlags = map[string][]string{
 	"scan":    {"--staged", "--min", "--history"},
 	"redact":  {"--min", "--history", "--mask", "--file"},
 	"render":  {"--file", "--proj", "-e", "--env"},
+	"share":   {"--ttl", "--multi", "--file", "--no-clip", "-e", "--env"},
 	"backup":  {"--file"},
 	"restore": {"--file", "--replace"},
 	"sync":    {"--file"},
@@ -145,6 +146,12 @@ func completeCandidates(st *store.Store, args []string) []string {
 	// флаг
 	if strings.HasPrefix(cur, "-") {
 		return matchPrefix(completionFlags[sub], cur)
+	}
+
+	// первый аргумент share смешанный: сабкоманды и ссылка proj/KEY —
+	// поэтому share не входит в refCommandSet
+	if sub == "share" && len(prior) == 1 {
+		return matchPrefix(append([]string{"setup", "ls", "revoke"}, refCandidates(st, cur)...), cur)
 	}
 
 	switch {
