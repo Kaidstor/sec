@@ -30,6 +30,35 @@ func TestEncodeDecodeRoundtrip(t *testing.T) {
 	}
 }
 
+func TestEncodeDecodePackRoundtrip(t *testing.T) {
+	key, err := NewKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := Envelope{Type: "pack", Project: "whois", Entries: []PackEntry{
+		{Key: "API_TOKEN", Kind: "apikey", Data: []byte("tok-123")},
+		{Key: "CERT", Kind: "file", Filename: "server.p12", Mode: "0640", Data: []byte{0, 1, 0xFF}},
+	}}
+	blob, err := Encode(key, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := Decode(key, blob)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Type != "pack" || got.Project != "whois" || len(got.Entries) != 2 {
+		t.Fatalf("roundtrip pack: %+v", got)
+	}
+	for i, e := range got.Entries {
+		w := env.Entries[i]
+		if e.Key != w.Key || e.Kind != w.Kind || e.Filename != w.Filename ||
+			e.Mode != w.Mode || !bytes.Equal(e.Data, w.Data) {
+			t.Fatalf("entry %d: %+v != %+v", i, e, w)
+		}
+	}
+}
+
 func TestBlobHeader(t *testing.T) {
 	key, _ := NewKey()
 	blob, err := Encode(key, Envelope{Type: "text", Data: []byte("x")})

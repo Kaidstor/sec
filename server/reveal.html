@@ -61,6 +61,15 @@
     white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-all;max-height:50vh;overflow-y:auto}
   .file{display:flex;align-items:center;gap:10px;background:var(--code-bg);
     border-radius:10px;padding:14px;font-family:var(--mono);font-size:14px;color:var(--code-ink)}
+  .rows{display:flex;flex-direction:column;gap:8px}
+  .row{display:flex;align-items:center;gap:10px;background:var(--code-bg);
+    border-radius:10px;padding:10px 14px;font-family:var(--mono);font-size:13.5px;color:var(--code-ink)}
+  .row .k{flex:1;overflow-wrap:anywhere;min-width:0}
+  .row .kind{color:var(--muted);font-size:12px}
+  .row button,.row a{background:var(--accent-soft);color:var(--accent);border:1px solid var(--line);
+    border-radius:8px;padding:6px 10px;font:600 12.5px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    text-decoration:none;cursor:pointer;white-space:nowrap}
+  #packname{font-family:var(--mono);color:var(--accent)}
   #error{border-left:3px solid var(--warn);background:var(--warn-bg);color:var(--warn);
     padding:12px 16px;border-radius:0 10px 10px 0;margin:0}
   .toggle{position:fixed;top:16px;right:16px;background:var(--panel);border:1px solid var(--line);
@@ -88,12 +97,22 @@
   </div>
 
   <div id="result" hidden>
+    <div id="pack" hidden>
+      <p style="margin-top:0">Пак <span id="packname"></span> — <span id="packcount"></span></p>
+      <div class="rows" id="packlist"></div>
+    </div>
     <pre id="secret" hidden></pre>
     <div class="file" id="fileinfo" hidden>📄 <span id="filename"></span> <span class="muted" id="filesize"></span></div>
     <div class="actions">
       <button id="copy" hidden>Скопировать</button>
       <a id="download" hidden>Скачать файл</a>
+      <button id="copyenv" hidden>Скопировать как .env</button>
+      <a id="downloadenv" hidden>Скачать .env</a>
+      <button id="showvals" hidden>Показать значения</button>
     </div>
+    <p id="packimport" class="muted" hidden style="margin-top:12px">
+      Если у вас есть sec: скачайте .env и выполните <code>sec import &lt;proj&gt; .env</code>
+      (файловые ключи скачиваются отдельно и заводятся <code>sec set &lt;proj&gt;/&lt;KEY&gt; --from-file</code>).</p>
     <p id="burned" class="muted" hidden style="margin-top:12px">
       Ссылка сгорела — повторно открыть её нельзя. Сохраните значение сейчас.</p>
   </div>
@@ -158,10 +177,89 @@
     return {env: env, data: b64std(env.data || ""), once: body.once};
   }
 
+  // KEY=VALUE для .env: простые значения — как есть, остальные в двойных
+  // кавычках с экранированием (так их понимает и sec import, и dotenv-парсеры)
+  function envQuote(v){
+    if (/^[A-Za-z0-9_@:%\/\.\,\-\+]*$/.test(v)) return v;
+    return '"' + v.replace(/\\/g, "\\\\").replace(/"/g, '\\"')
+      .replace(/\r/g, "").replace(/\n/g, "\\n") + '"';
+  }
+
+  function showPack(res){
+    var td = new TextDecoder();
+    var entries = res.env.entries || [];
+    var texts = [];
+    $("pack").hidden = false;
+    $("packname").textContent = res.env.project || "";
+    $("packcount").textContent = entries.length + " ключ" +
+      (entries.length % 10 === 1 && entries.length % 100 !== 11 ? "" :
+       entries.length % 10 >= 2 && entries.length % 10 <= 4 && (entries.length % 100 < 10 || entries.length % 100 >= 20) ? "а" : "ей");
+    entries.forEach(function(e){
+      var data = b64std(e.data || "");
+      var row = document.createElement("div");
+      row.className = "row";
+      var k = document.createElement("span");
+      k.className = "k";
+      k.textContent = (e.filename ? "📄 " : "") + e.key;
+      row.appendChild(k);
+      if (e.kind && e.kind !== "file"){
+        var kind = document.createElement("span");
+        kind.className = "kind";
+        kind.textContent = e.kind;
+        row.appendChild(kind);
+      }
+      if (e.filename){
+        var a = document.createElement("a");
+        a.href = URL.createObjectURL(new Blob([data], {type: "application/octet-stream"}));
+        a.download = e.filename;
+        a.textContent = "Скачать " + e.filename;
+        row.appendChild(a);
+      } else {
+        var text = td.decode(data);
+        texts.push(e.key + "=" + envQuote(text));
+        var btn = document.createElement("button");
+        btn.textContent = "Скопировать";
+        btn.onclick = function(){
+          navigator.clipboard.writeText(text).then(function(){
+            btn.textContent = "✓";
+            setTimeout(function(){ btn.textContent = "Скопировать"; }, 2000);
+          }).catch(function(){ btn.textContent = "не вышло"; });
+        };
+        row.appendChild(btn);
+      }
+      $("packlist").appendChild(row);
+    });
+    if (texts.length){
+      var envText = texts.join("\n") + "\n";
+      var copyEnv = $("copyenv");
+      copyEnv.hidden = false;
+      copyEnv.onclick = function(){
+        navigator.clipboard.writeText(envText).then(function(){
+          copyEnv.textContent = "Скопировано ✓";
+          setTimeout(function(){ copyEnv.textContent = "Скопировать как .env"; }, 2000);
+        }).catch(function(){ copyEnv.textContent = "Не вышло — покажите значения и скопируйте вручную"; });
+      };
+      var dl = $("downloadenv");
+      dl.href = URL.createObjectURL(new Blob([envText], {type: "text/plain"}));
+      dl.download = (res.env.project || "secrets") + ".env";
+      dl.hidden = false;
+      var showBtn = $("showvals");
+      showBtn.hidden = false;
+      showBtn.onclick = function(){
+        var pre = $("secret");
+        pre.hidden = !pre.hidden;
+        if (!pre.hidden) pre.textContent = envText;
+        showBtn.textContent = pre.hidden ? "Показать значения" : "Скрыть значения";
+      };
+    }
+    $("packimport").hidden = false;
+  }
+
   function show(res){
     $("ask").hidden = true;
     $("result").hidden = false;
     if (res.once) $("burned").hidden = false;
+    if (res.env.type === "pack") return showPack(res);
     if (res.env.type === "file"){
       var name = res.env.filename || "secret";
       $("fileinfo").hidden = false;

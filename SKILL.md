@@ -113,6 +113,7 @@ github.com/kaidstor/sec (это **не** rebrandy-проект: задачи в 
 | мигрировать существующий `.env`/JSON | `sec import [proj] <path\|->` |
 | 2FA-код (печатать в чат безопасно) | `sec otp <proj>/<KEY>` |
 | передать секрет человеку | `sec share <proj>/<KEY>` (URL печатать можно) |
+| передать пак целиком | `sec share <proj> --all` или `--only A,B` (получатель скачает `.env`) |
 | что пора ротировать / здоровье стора | `sec stale`, `sec doctor` |
 | кто трогал секреты | `sec log [proj[/KEY]]` |
 | что из CLI используется, а что мертво | `sec stats [--days 14]` |

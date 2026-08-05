@@ -10,6 +10,7 @@ import (
 	"github.com/kaidstor/sec/internal/store"
 
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -17,6 +18,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -82,12 +84,14 @@ func shareCreateCommand(args []string) int {
 		ref, rest = "-", rest[1:]
 	}
 	fs := flag.NewFlagSet("share", flag.ExitOnError)
-	var ttlStr, fromFile string
-	var multi, noClip bool
+	var ttlStr, fromFile, only string
+	var multi, noClip, all bool
 	fs.StringVar(&ttlStr, "ttl", "24h", "срок жизни ссылки 1h…7d (сгорает по времени, даже если не открыта)")
 	fs.BoolVar(&multi, "multi", false, "многоразовая ссылка до истечения TTL (умолч. — одноразовая)")
 	fs.StringVar(&fromFile, "file", "", "поделиться произвольным файлом с диска (вне стора)")
 	fs.BoolVar(&noClip, "no-clip", false, "не копировать ссылку в буфер обмена")
+	fs.BoolVar(&all, "all", false, "поделиться проектом целиком (пак: все ключи одной ссылкой)")
+	fs.StringVar(&only, "only", "", "поделиться паком из перечисленных ключей (через запятую)")
 	getEnv := addEnvFlag(fs)
 	_ = fs.Parse(rest)
 	// flag прекращает разбор на первом позиционном — всё после него пришло бы
@@ -116,6 +120,31 @@ func shareCreateCommand(args []string) int {
 	var env share.Envelope
 	var target string // для аудита и сообщений; значений не содержит
 	switch {
+	case all || only != "":
+		if fromFile != "" || ref == "-" {
+			die("--all/--only собирают пак из стора — вместе с --file или - не работают")
+		}
+		if all && only != "" {
+			die("--all и --only взаимоисключающие: либо весь проект, либо перечисленные ключи")
+		}
+		if strings.Contains(ref, "/") {
+			die("пак — это проект целиком: sec share <proj> --all (без /KEY)")
+		}
+		if st == nil {
+			die("%v", storeErr)
+		}
+		proj, _ := resolveServiceProj(ref, fs, getEnv())
+		keys := st.EffectiveKeys(proj)
+		if len(keys) == 0 {
+			die("в проекте %s нет ключей (смотри: sec ls)", store.RefToCLIProj(proj))
+		}
+		entries, perr := packEntries(keys, only)
+		if perr != nil {
+			die("%s: %v", store.RefToCLIProj(proj), perr)
+		}
+		svc, _ := store.BaseAndEnv(proj)
+		env = share.Envelope{Type: "pack", Project: svc, Entries: entries}
+		target = fmt.Sprintf("%s (пак, %d ключей)", proj, len(entries))
 	case fromFile != "":
 		if ref != "" {
 			die("sec share --file <путь> — без <proj>/<KEY>: файл берётся с диска, не из стора")
@@ -244,6 +273,70 @@ func shareCreateCommand(args []string) int {
 	}
 	fmt.Fprintln(os.Stderr, "sec: "+msg)
 	return 0
+}
+
+// packEntries собирает содержимое пака: текстовые значения как есть, файловые
+// (kind: file и бинарные) — с именем и правами, чтобы получатель скачал их
+// отдельными файлами, а не в .env. Суммарный размер ограничен тем же пределом,
+// что одиночный файловый секрет.
+func packEntries(keys map[string]store.Secret, only string) ([]share.PackEntry, error) {
+	names := make([]string, 0, len(keys))
+	if only == "" {
+		for k := range keys {
+			names = append(names, k)
+		}
+		sort.Strings(names)
+	} else {
+		var missing []string
+		for _, k := range strings.Split(only, ",") {
+			k = strings.TrimSpace(k)
+			if k == "" {
+				continue
+			}
+			if _, ok := keys[k]; ok {
+				names = append(names, k)
+			} else {
+				missing = append(missing, k)
+			}
+		}
+		if len(missing) > 0 {
+			return nil, fmt.Errorf("нет ключей: %s", strings.Join(missing, ", "))
+		}
+		if len(names) == 0 {
+			return nil, errors.New("--only пуст — не из чего собирать пак")
+		}
+	}
+	total := 0
+	entries := make([]share.PackEntry, 0, len(names))
+	for _, k := range names {
+		sec := keys[k]
+		raw, err := sec.Bytes()
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", k, err)
+		}
+		e := share.PackEntry{Key: k, Data: raw}
+		if sec.Meta != nil {
+			e.Kind = sec.Meta.Kind
+		}
+		if sec.IsFile() {
+			e.Filename = k
+			if sec.Meta != nil && sec.Meta.Filename != "" {
+				if base := safeBaseName(sec.Meta.Filename); base != "" {
+					e.Filename = base
+				}
+			}
+			e.Mode = "0600"
+			if m, ok := storedFileMode(sec); ok {
+				e.Mode = fmt.Sprintf("%04o", m)
+			}
+		}
+		total += len(raw)
+		entries = append(entries, e)
+	}
+	if total > maxFileSecret {
+		return nil, fmt.Errorf("суммарно %d байт — больше предела %d МиБ (сузь набор: --only)", total, maxFileSecret>>20)
+	}
+	return entries, nil
 }
 
 func shareSetupCommand(args []string) int {

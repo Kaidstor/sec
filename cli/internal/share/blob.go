@@ -29,7 +29,20 @@ const (
 // едут внутри шифротекста: сервер не видит даже их.
 type Envelope struct {
 	V        int    `json:"v"`
-	Type     string `json:"type"` // "text" | "file"
+	Type     string `json:"type"` // "text" | "file" | "pack"
+	Filename string `json:"filename,omitempty"`
+	Mode     string `json:"mode,omitempty"`
+	Data     []byte `json:"data,omitempty"`
+	// pack: набор ключей проекта одной ссылкой
+	Project string      `json:"project,omitempty"`
+	Entries []PackEntry `json:"entries,omitempty"`
+}
+
+// PackEntry — один ключ внутри пака. Filename/Mode заполнены у файловых
+// секретов (получатель скачивает их отдельными файлами, не в .env).
+type PackEntry struct {
+	Key      string `json:"key"`
+	Kind     string `json:"kind,omitempty"` // meta kind (config/file/…) — для пометок на странице
 	Filename string `json:"filename,omitempty"`
 	Mode     string `json:"mode,omitempty"`
 	Data     []byte `json:"data"`

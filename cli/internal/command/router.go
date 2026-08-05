@@ -287,6 +287,7 @@ Windows Credential Manager (fallback: env SEC_KEY / файл).
   sec check [proj] [--file .sec]       проверить, что заведены ключи из манифеста
   sec share <proj>/<KEY> [--ttl 24h]   одноразовая ссылка на секрет: шифруется локально,
                                        ключ — в URL-фрагменте, сервер видит только шифротекст
+  sec share <proj> --all|--only A,B    пак: все/выбранные ключи проекта одной ссылкой
   sec share - | --file <путь>          поделиться значением со stdin / файлом с диска
   sec share ls | revoke <id|url>       активные ссылки / досрочно отозвать
   sec share setup <url>                подключить сервер ссылок (токен — скрытым вводом)
