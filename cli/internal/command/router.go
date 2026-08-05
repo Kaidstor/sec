@@ -266,6 +266,7 @@ Windows Credential Manager (fallback: env SEC_KEY / файл).
   sec ls [proj] --filter <шаблон>      только совпавшие имена (подстрока/glob)
   sec find <шаблон> [-l|--json]        найти ключи по всему хранилищу → proj/KEY
   sec diff <projA> <projB>             сравнить проекты по отпечаткам (без значений)
+  sec diff <proj> <host>:/app/.env     сверить стор с env-файлом на хосте (или локальным)
   sec mv <proj>/<KEY> <p2>[/<KEY2>]    перенести/переименовать (без раскрытия)
   sec cp <proj>/<KEY> <p2>[/<KEY2>]    скопировать ключ (оригинал на месте)
   sec link <proj>/<KEY> <род>/<KEY2>   живая ссылка на чужое значение (менять — в родителе)
@@ -276,6 +277,7 @@ Windows Credential Manager (fallback: env SEC_KEY / файл).
   sec run [proj] [--only A,B] -- cmd   запустить cmd с env из проекта
   sec run [proj] --file <KEY> -- cmd   + файловый секрет во временный файл на время cmd
   sec export [proj] --file .env        записать .env (только в файл)
+  sec deploy [proj] --to <host>:/путь  применить стор в env-файл на хосте (merge)
   sec import [proj] [path/to/.env|-]   импортировать ключи из .env (умолч. ./.env)
   sec import [proj] '{"KEY":"…"}'      импортировать из JSON (файл, stdin, буфер, аргумент)
   sec import [proj] --from-infisical   импортировать из Infisical (их CLI)
@@ -350,6 +352,26 @@ Windows Credential Manager (fallback: env SEC_KEY / файл).
   sec export api --file recon:/app/.env
   sec get api/CERT --out recon:/app/certs/server.p12
 Хосты/алиасы — из ~/.ssh/config. Локальный путь с ':' пиши как ./имя:файла.
+
+Сверка и применение env на хосте (diff/deploy) — для конфигов, которые живут
+не только в sec: часть ключей там заводит CI или админ руками.
+  sec diff whois whois:/app/.env.whois --sudo        что разошлось (только чтение)
+  sec deploy whois --to whois:/app/.env.whois --sudo \
+    --after 'cd /app && docker compose up whois -d'  применить и перезапустить
+deploy по умолчанию МЕРЖИТ: обновляет только ключи, которые есть в сторе, а
+чужие ключи файла, его порядок строк и комментарии не трогает. --replace
+пересобирает файл целиком (с предупреждением, сколько ключей потеряется).
+Перед записью показывается тот же diff и спрашивается подтверждение (--dry-run
+— только показать, --yes — без вопросов), снимается бэкап <путь>.bak-<время>
+(--no-backup отключает), после записи отпечатки сверяются заново. --sudo нужен
+для root-овых конфигов: пароль вводится в ssh-сессии, через sec не проходит.
+Флаги diff/deploy: --only A,B — ограничить набор ключей.
+
+Виды значений (meta --kind): kind: file — не env-значение, а файл (см. выше);
+kind: config — несекретная настройка (endpoint, размер кэша, список
+провайдеров). Конфиг не считается утечкой в scan/redact (вернуть в поиск —
+--include-config) и показывается открытым текстом в diff/deploy: отпечатка мало,
+чтобы понять, что там сейчас стоит.
 
 Переменные окружения:
   SEC_STORE       путь к хранилищу (умолч. ~/.local/share/sec/store.enc,
@@ -453,6 +475,8 @@ func Run(args []string) int {
 		return runCommand(args[1:])
 	case "export":
 		return exportCommand(args[1:])
+	case "deploy":
+		return deployCommand(args[1:])
 	case "import":
 		return importCommand(args[1:])
 	case "push":

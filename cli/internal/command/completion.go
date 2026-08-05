@@ -22,7 +22,7 @@ import (
 var completionSubcommands = []string{
 	"set", "gen", "get", "verify", "history", "undo", "redo", "forget",
 	"meta", "otp", "ls", "find", "diff", "mv", "cp", "link", "unlink", "extend",
-	"rm", "run", "export", "import", "push", "check", "scan", "redact",
+	"rm", "run", "export", "deploy", "import", "push", "check", "scan", "redact",
 	"render", "share", "stale", "doctor", "backup", "restore", "sync", "rekey",
 	"log", "info", "completion", "version", "help",
 }
@@ -37,8 +37,8 @@ var refCommandSet = map[string]bool{
 
 // projCommandSet — команды, чей позиционный аргумент это проект целиком.
 var projCommandSet = map[string]bool{
-	"run": true, "export": true, "import": true, "push": true, "ls": true,
-	"check": true, "diff": true, "stale": true, "extend": true,
+	"run": true, "export": true, "deploy": true, "import": true, "push": true,
+	"ls": true, "check": true, "diff": true, "stale": true, "extend": true,
 }
 
 // fileCommandSet — команды, чей позиционный аргумент это путь (дополняем файлами).
@@ -60,7 +60,7 @@ var completionFlags = map[string][]string{
 	"stale":   {"--older-than", "--json"},
 	"otp":     {"--clip", "-e", "--env"},
 	"verify":  {"-e", "--env"},
-	"diff":    {"-e", "--env"},
+	"diff":    {"--sudo", "--only", "-e", "--env"},
 	"ls":      {"-l", "--json", "--filter", "-f", "-e", "--env"},
 	"find":    {"-l", "--json", "-e", "--env"},
 	"rm":      {"--all", "-e", "--env"},
@@ -71,11 +71,12 @@ var completionFlags = map[string][]string{
 	"extend":  {"--from", "--remove", "--parent-env", "-e", "--env"},
 	"run":     {"--only", "--file", "--include-files", "-v", "-e", "--env"},
 	"export":  {"--file", "--include-files", "-e", "--env"},
+	"deploy":  {"--to", "--only", "--after", "--sudo", "--replace", "--no-backup", "--dry-run", "--yes", "-e", "--env"},
 	"import":  {"--file", "--from-json", "--clipboard", "--from-infisical", "--infisical-env", "--path", "--projectId", "--token", "-e", "--env"},
 	"push":    {"--to-infisical", "--infisical-env", "--path", "--only", "-e", "--env"},
 	"check":   {"--file", "--all-envs", "-e", "--env"},
-	"scan":    {"--staged", "--min", "--history"},
-	"redact":  {"--min", "--history", "--mask", "--file"},
+	"scan":    {"--staged", "--min", "--history", "--include-config"},
+	"redact":  {"--min", "--history", "--include-config", "--mask", "--file"},
 	"render":  {"--file", "--proj", "-e", "--env"},
 	"share":   {"--ttl", "--multi", "--file", "--no-clip", "-e", "--env"},
 	"backup":  {"--file"},
