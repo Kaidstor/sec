@@ -24,8 +24,18 @@ var completionSubcommands = []string{
 	"meta", "otp", "ls", "find", "diff", "mv", "cp", "link", "unlink", "extend",
 	"rm", "run", "export", "deploy", "import", "push", "check", "scan", "redact",
 	"render", "share", "stale", "doctor", "backup", "restore", "sync", "rekey",
-	"log", "info", "completion", "version", "help",
+	"log", "info", "stats", "completion", "version", "help",
 }
+
+// knownCommands — те же имена множеством: счётчик использования (recordUsage)
+// отмечает только их, чтобы в файл не попадали опечатки и скрытые __-команды.
+var knownCommands = func() map[string]bool {
+	m := make(map[string]bool, len(completionSubcommands))
+	for _, c := range completionSubcommands {
+		m[c] = true
+	}
+	return m
+}()
 
 // refCommandSet — команды, чей позиционный аргумент это ссылка proj/KEY.
 var refCommandSet = map[string]bool{
@@ -84,6 +94,7 @@ var completionFlags = map[string][]string{
 	"sync":    {"--file"},
 	"log":     {"-n", "--json"},
 	"info":    {"--json"},
+	"stats":   {"--days", "--all", "--json"},
 }
 
 // completionCommand печатает скрипт дополнения для указанного шелла.

@@ -11,7 +11,9 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
+	"github.com/kaidstor/sec/internal/stats"
 	"github.com/kaidstor/sec/internal/store"
 )
 
@@ -299,6 +301,7 @@ Windows Credential Manager (fallback: env SEC_KEY / файл).
   sec rekey                            ротация мастер-ключа с перешифровкой стора
   sec log [proj[/KEY]] [-n 20] [--json] журнал обращений (кто/когда/что, без значений)
   sec info [--json]                    путь к хранилищу, бэкенд ключа, статистика
+  sec stats [--days 14] [--json]       что из CLI реально используется, а что ни разу
   sec completion zsh|bash|fish         скрипт автодополнения для шелла
   sec version                          версия CLI и платформа
 
@@ -390,6 +393,58 @@ kind: config — несекретная настройка (endpoint, разме
 событий. URL целиком = секрет: канал передачи выбирай как для пароля.
 `
 
+// commandAliases приводит синонимы к каноническому имени — чтобы счётчик
+// использования не считал ls и list разными командами.
+var commandAliases = map[string]string{
+	"generate": "gen", "move": "mv", "copy": "cp", "list": "ls", "search": "find",
+	"-h": "help", "--help": "help", "-v": "version", "--version": "version",
+}
+
+// recordUsage отмечает запуск в локальном счётчике (см. sec stats).
+func recordUsage(args []string) {
+	cmd := args[0]
+	if c, ok := commandAliases[cmd]; ok {
+		cmd = c
+	}
+	if !knownCommands[cmd] { // неизвестное или скрытое (__complete) не считаем
+		return
+	}
+	stats.Record(cmd, usedFlags(cmd, args[1:]), time.Now())
+}
+
+// usedFlags выбирает из аргументов только те флаги, что объявлены у этой
+// команды, и возвращает их в каноническом написании. Фильтр по известному
+// списку — не косметика: он гарантирует, что в файл счётчиков не попадёт ни
+// одного байта, набранного пользователем свободно (значение флага, путь,
+// заметка), сколько бы дефисов там ни оказалось.
+func usedFlags(cmd string, args []string) []string {
+	canon := map[string]string{}
+	for _, f := range completionFlags[cmd] {
+		canon[strings.TrimLeft(f, "-")] = f
+	}
+	if len(canon) == 0 {
+		return nil
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, a := range args {
+		if a == "--" {
+			break // дальше аргументы чужой команды: sec run -- just dev --flag
+		}
+		if len(a) < 2 || a[0] != '-' {
+			continue
+		}
+		name, _, _ := strings.Cut(strings.TrimLeft(a, "-"), "=") // --ttl=3d
+		f, ok := canon[name]
+		if !ok || seen[f] {
+			continue
+		}
+		seen[f] = true
+		out = append(out, f)
+	}
+	return out
+}
+
 // Run — точка входа CLI: разбирает args (без имени программы), маршрутизирует
 // команду и возвращает код выхода. main() из пакета main делегирует сюда.
 func Run(args []string) int {
@@ -397,6 +452,7 @@ func Run(args []string) int {
 		fmt.Print(usage)
 		return 2
 	}
+	recordUsage(args)
 	switch args[0] {
 	case "-h", "--help", "help":
 		fmt.Print(usage)
@@ -483,6 +539,8 @@ func Run(args []string) int {
 		return pushCommand(args[1:])
 	case "info":
 		return infoCommand(args[1:])
+	case "stats":
+		return statsCommand(args[1:])
 	default:
 		die("неизвестная команда %q (sec --help)", args[0])
 		return 2 // die() уже вызвал os.Exit; return для компилятора
