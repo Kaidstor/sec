@@ -680,15 +680,21 @@ func logCommand(args []string) int {
 	filter, rest := splitArgs(args)
 	fs := flag.NewFlagSet("log", flag.ExitOnError)
 	var n int
-	var asJSON bool
-	fs.IntVar(&n, "n", 20, "сколько последних записей показать")
+	var asJSON, all bool
+	fs.IntVar(&n, "n", 20, "сколько последних записей показать (0 — все)")
+	fs.BoolVar(&all, "all", false, "искать и в архивах ротации, а не только в текущем файле")
 	fs.BoolVar(&asJSON, "json", false, "машинный вывод JSON")
 	_ = fs.Parse(rest)
 	if filter == "" {
 		filter = fs.Arg(0)
 	}
 
+	// По умолчанию — только текущий файл: годовую историю ради двадцати
+	// последних строк парсить незачем.
 	entries := audit.Read()
+	if all {
+		entries = audit.ReadAll()
+	}
 	if filter != "" {
 		var out []audit.Entry
 		for _, e := range entries {
@@ -699,7 +705,7 @@ func logCommand(args []string) int {
 		}
 		entries = out
 	}
-	if len(entries) > n {
+	if n > 0 && len(entries) > n {
 		entries = entries[len(entries)-n:]
 	}
 	if asJSON {

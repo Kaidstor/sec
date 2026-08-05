@@ -299,7 +299,7 @@ Windows Credential Manager (fallback: env SEC_KEY / файл).
   sec restore --file <f> [--replace]   восстановить (умолч. merge, старое в истории)
   sec sync --file <blob>               синхронизация через общий passphrase-блоб
   sec rekey                            ротация мастер-ключа с перешифровкой стора
-  sec log [proj[/KEY]] [-n 20] [--json] журнал обращений (кто/когда/что, без значений)
+  sec log [proj[/KEY]] [-n 20] [--all] журнал обращений (кто/когда/что, без значений)
   sec info [--json]                    путь к хранилищу, бэкенд ключа, статистика
   sec stats [--days 14] [--json]       что из CLI реально используется, а что ни разу
   sec completion zsh|bash|fish         скрипт автодополнения для шелла

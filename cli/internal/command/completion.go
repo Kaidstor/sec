@@ -92,7 +92,7 @@ var completionFlags = map[string][]string{
 	"backup":  {"--file"},
 	"restore": {"--file", "--replace"},
 	"sync":    {"--file"},
-	"log":     {"-n", "--json"},
+	"log":     {"-n", "--all", "--json"},
 	"info":    {"--json"},
 	"stats":   {"--days", "--all", "--json"},
 }
