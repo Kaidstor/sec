@@ -74,7 +74,10 @@ sec scan --staged
   `run --file KEY -- cmd` разворачивает его во временный файл 0600 на время
   команды и отдаёт путь в env-переменной (паттерн systemd `LoadCredential`);
   в env-инъекцию `run`/`export` ключи `kind: file` по умолчанию не попадают
-  (`--include-files` вернёт).
+  (`--include-files` вернёт). Что кладётся в переменную, зачем бывает нужна
+  форма `--file ENV=KEY` и почему `scan` шумит на конфиге из `import` —
+  [«Файловые секреты, шум scan и порог `--min`»](https://notes.kaidstor.ru/91930e46-fe4b-4ca9-a58f-70432f409bdc)
+  ([`docs/file-secrets-and-scan.md`](docs/file-secrets-and-scan.md)).
 - **Сверка без раскрытия** — `peek` / `fingerprint` / `verify` / `diff`
   (отпечатки, безопасные для чата).
 - **Поиск** — `find <шаблон>` (по всему хранилищу → `proj/KEY`) и
