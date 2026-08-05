@@ -110,17 +110,29 @@ func resolveServiceProj(service string, fs *flag.FlagSet, explicitEnv string) (s
 }
 
 // collectPositionals разбирает args, где позиционные аргументы и флаги
-// (включая -e/--env) идут вперемешку: собирает ведущие позиционные, парсит
-// остаток флагсетом и добавляет хвостовые. Нужно там, где позиционных
-// несколько — стандартный flag останавливается на первом же (mv/cp/diff).
+// (включая -e/--env) идут вперемешку: по очереди снимает ведущие позиционные и
+// скармливает остаток флагсету, пока не кончится. Нужно там, где позиционных
+// несколько — стандартный flag останавливается на первом же (mv/cp/diff) — и
+// там, где флаг стоит после позиционного (`sec deploy --sudo proj --to …`).
 func collectPositionals(fs *flag.FlagSet, args []string) []string {
 	var pos []string
-	for len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		pos = append(pos, args[0])
-		args = args[1:]
+	for {
+		for len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+			pos = append(pos, args[0])
+			args = args[1:]
+		}
+		if len(args) == 0 {
+			return pos
+		}
+		_ = fs.Parse(args)
+		rest := fs.Args()
+		// Голый "-" (stdin у scan/redact/import) flag за флаг не считает и
+		// возвращает как есть — без этой проверки цикл бы не кончился.
+		if len(rest) == len(args) {
+			return append(pos, rest...)
+		}
+		args = rest
 	}
-	_ = fs.Parse(args)
-	return append(pos, fs.Args()...)
 }
 
 // mustSecret достаёт секрет или выходит с «нет proj/key» — общий хвост команд
