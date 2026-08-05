@@ -88,16 +88,42 @@ func TestCollectBinaryValues(t *testing.T) {
 			"TXT": {Value: "просто текстовое значение"},
 		},
 	}}
-	bins := collectBinaryValues(st, 4, false)
+	bins := collectBinaryValues(st, storeScope{minLen: 4})
 	if len(bins) != 1 || bins[string(raw)] == nil {
 		t.Errorf("ожидались только текущие сырые байты: %v ключей", len(bins))
 	}
-	bins = collectBinaryValues(st, 4, true)
+	bins = collectBinaryValues(st, storeScope{minLen: 4, withHistory: true})
 	if len(bins) != 2 || bins[string(old)][0] != "keys/P12~prev" {
 		t.Errorf("история должна попадать с ~prev: %+v", refsOf(bins))
 	}
-	if bins := collectBinaryValues(st, 100, true); len(bins) != 0 {
+	if bins := collectBinaryValues(st, storeScope{minLen: 100, withHistory: true}); len(bins) != 0 {
 		t.Errorf("короче minLen — отбрасывается: %v", refsOf(bins))
+	}
+}
+
+// kind: config — не секрет, а настройка: в scan/redact она даёт ложные
+// срабатывания на каждом втором файле проекта. Вернуть в поиск — --include-config.
+func TestCollectStoreValuesSkipsConfig(t *testing.T) {
+	st := &store.Store{Projects: map[string]map[string]store.Secret{
+		"whois": {
+			"API_TOKEN": {Value: "supersecretvalue123"},
+			"PROVIDERS": {Value: "whoxy,ripe,domaintools", Meta: &store.Meta{Kind: store.KindConfig}},
+		},
+	}}
+	values, skips := collectStoreValues(st, storeScope{minLen: 8})
+	if _, found := values["whoxy,ripe,domaintools"]; found {
+		t.Error("конфиг не должен искаться как секрет")
+	}
+	if _, found := values["supersecretvalue123"]; !found {
+		t.Error("обычный секрет должен остаться в поиске")
+	}
+	if skips.config != 1 {
+		t.Errorf("пропущенные конфиги считаются отдельно: %+v", skips)
+	}
+
+	values, skips = collectStoreValues(st, storeScope{minLen: 8, includeConfig: true})
+	if _, found := values["whoxy,ripe,domaintools"]; !found || skips.config != 0 {
+		t.Errorf("--include-config должен возвращать конфиг в поиск: %+v", skips)
 	}
 }
 

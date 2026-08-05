@@ -38,6 +38,9 @@ const maxHistory = 5
 // (файловые секреты — сертификаты, ключи, keystore). Пустой Enc — обычный текст.
 const EncB64 = "b64"
 
+// KindConfig — значение Meta.Kind для несекретных настроек (см. Secret.IsConfig).
+const KindConfig = "config"
+
 type Version struct {
 	Value     string `json:"value"`
 	Enc       string `json:"enc,omitempty"`
@@ -76,6 +79,11 @@ func (s Secret) IsBinary() bool { return s.Enc == EncB64 }
 func (s Secret) IsFile() bool {
 	return s.Enc == EncB64 || (s.Meta != nil && s.Meta.Kind == "file")
 }
+
+// IsConfig — значение не секрет, а настройка (kind: config): endpoint, размер
+// кэша, список провайдеров. Такие scan/redact не считают утечкой, а diff/deploy
+// показывают открытым текстом — отпечатка мало, чтобы понять «что там сейчас».
+func (s Secret) IsConfig() bool { return s.Meta != nil && s.Meta.Kind == KindConfig }
 
 // Bytes — сырые байты значения: для бинарных — декодированный base64,
 // для текста — байты строки как есть.

@@ -18,7 +18,7 @@ func redactStore() *store.Store {
 
 func redactText(t *testing.T, st *store.Store, in string, minLen int, withHistory, mask bool) (string, map[string]bool) {
 	t.Helper()
-	values, _ := collectStoreValues(st, minLen, withHistory)
+	values, _ := collectStoreValues(st, storeScope{minLen: minLen, withHistory: withHistory})
 	repls := buildReplacements(values, mask)
 	var buf bytes.Buffer
 	hit := map[string]bool{}

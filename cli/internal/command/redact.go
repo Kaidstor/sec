@@ -38,10 +38,11 @@ type replacement struct {
 func redactCommand(args []string) int {
 	fs := flag.NewFlagSet("redact", flag.ExitOnError)
 	var minLen int
-	var withHistory, mask bool
+	var withHistory, mask, includeConfig bool
 	var outFile string
 	fs.IntVar(&minLen, "min", 8, "игнорировать значения короче N символов (шум)")
 	fs.BoolVar(&withHistory, "history", false, "чистить и прошлые значения из истории, не только текущие")
+	fs.BoolVar(&includeConfig, "include-config", false, "чистить и несекретные значения kind: config")
 	fs.BoolVar(&mask, "mask", false, "заменять на [redacted] без имени ключа")
 	fs.StringVar(&outFile, "file", "", "записать результат в файл 0600 (умолч. — stdout)")
 	// collectPositionals — чтобы флаги работали и после путей (sec redact a.log --file out).
@@ -55,10 +56,8 @@ func redactCommand(args []string) int {
 	if err != nil {
 		die("%v", err)
 	}
-	values, skipped := collectStoreValues(st, minLen, withHistory)
-	if skipped > 0 {
-		fmt.Fprintf(os.Stderr, "sec: пропущено значений короче %d символов: %d (чистить всё: --min 1)\n", minLen, skipped)
-	}
+	values, skips := collectStoreValues(st, storeScope{minLen: minLen, withHistory: withHistory, includeConfig: includeConfig})
+	reportScanSkips(skips, minLen)
 	repls := buildReplacements(values, mask)
 
 	// Куда пишем результат: файл 0600 или stdout. Вывод безопасен (секретов нет),

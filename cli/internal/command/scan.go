@@ -30,18 +30,28 @@ type leak struct {
 	refs []string
 }
 
+// storeScope — что из стора берут в поиск scan и redact.
+type storeScope struct {
+	minLen        int
+	withHistory   bool
+	includeConfig bool // ключи kind: config — по умолчанию не ищем (это не секреты)
+}
+
+// scanSkips — что и почему не попало в поиск (для сообщений в stderr).
+type scanSkips struct{ short, config int }
+
 // collectStoreValues собирает карту «значение → ключи, которым оно принадлежит»
 // из всех собственных секретов стора (ссылки пропускаются — значение у родителя,
-// там и ищется). Значения короче minLen отбрасываются как шум (их число —
-// второй результат). При withHistory включаются и прошлые значения из истории
-// (ref получает суффикс ~prev). Общий сбор для scan (поиск утечек) и redact
-// (чистка текста).
-func collectStoreValues(st *store.Store, minLen int, withHistory bool) (map[string][]string, int) {
+// там и ищется). Значения короче minLen отбрасываются как шум, значения
+// kind: config — как несекретные (это настройки: endpoint, размер кэша). При
+// withHistory включаются и прошлые значения из истории (ref получает суффикс
+// ~prev). Общий сбор для scan (поиск утечек) и redact (чистка текста).
+func collectStoreValues(st *store.Store, sc storeScope) (map[string][]string, scanSkips) {
 	values := map[string][]string{}
-	skipped := 0
+	var skips scanSkips
 	add := func(val, ref string) {
-		if len([]rune(val)) < minLen {
-			skipped++
+		if len([]rune(val)) < sc.minLen {
+			skips.short++
 			return
 		}
 		values[val] = append(values[val], ref)
@@ -52,29 +62,43 @@ func collectStoreValues(st *store.Store, minLen int, withHistory bool) (map[stri
 			if sec.Ref != "" {
 				continue
 			}
+			if sec.IsConfig() && !sc.includeConfig {
+				skips.config++
+				continue
+			}
 			ref := p + "/" + k
 			add(sec.Value, ref)
-			if withHistory {
+			if sc.withHistory {
 				for _, v := range sec.History {
 					add(v.Value, ref+"~prev")
 				}
 			}
 		}
 	}
-	return values, skipped
+	return values, skips
+}
+
+// reportScanSkips печатает, что осталось за бортом поиска, и как это вернуть.
+func reportScanSkips(skips scanSkips, minLen int) {
+	if skips.short > 0 {
+		fmt.Fprintf(os.Stderr, "sec: пропущено значений короче %d символов: %d (искать всё: --min 1)\n", minLen, skips.short)
+	}
+	if skips.config > 0 {
+		fmt.Fprintf(os.Stderr, "sec: пропущено несекретных значений (kind: config): %d (искать и их: --include-config)\n", skips.config)
+	}
 }
 
 // collectBinaryValues — сырые байты бинарных (base64) секретов, ключ карты —
 // байты как string. Утёкший на диск файл в исходной форме base64-текста не
 // содержит — искать надо сами байты, текстовый скан их не увидит.
-func collectBinaryValues(st *store.Store, minLen int, withHistory bool) map[string][]string {
+func collectBinaryValues(st *store.Store, sc storeScope) map[string][]string {
 	bins := map[string][]string{}
 	add := func(v store.Version, ref string) {
 		if v.Enc != store.EncB64 {
 			return
 		}
 		raw, err := (store.Secret{Value: v.Value, Enc: v.Enc}).Bytes()
-		if err != nil || len(raw) < minLen {
+		if err != nil || len(raw) < sc.minLen {
 			return
 		}
 		bins[string(raw)] = append(bins[string(raw)], ref)
@@ -85,9 +109,12 @@ func collectBinaryValues(st *store.Store, minLen int, withHistory bool) map[stri
 			if sec.Ref != "" {
 				continue
 			}
+			if sec.IsConfig() && !sc.includeConfig {
+				continue
+			}
 			ref := p + "/" + k
 			add(store.Version{Value: sec.Value, Enc: sec.Enc}, ref)
-			if withHistory {
+			if sc.withHistory {
 				for _, v := range sec.History {
 					add(v, ref+"~prev")
 				}
@@ -101,27 +128,28 @@ func scanCommand(args []string) int {
 	fs := flag.NewFlagSet("scan", flag.ExitOnError)
 	var staged bool
 	var minLen int
-	var withHistory bool
+	var withHistory, includeConfig bool
 	fs.BoolVar(&staged, "staged", false, "сканировать git diff --cached (добавленные строки)")
 	fs.IntVar(&minLen, "min", 8, "игнорировать значения короче N символов (шум)")
 	fs.BoolVar(&withHistory, "history", false, "искать и прошлые значения из истории, не только текущие")
-	_ = fs.Parse(args)
-	paths := fs.Args()
+	fs.BoolVar(&includeConfig, "include-config", false, "искать и несекретные значения kind: config")
+	// collectPositionals — чтобы флаги работали и после путей (sec scan src --min 4),
+	// как в redact: иначе флаг уезжает в пути и падает «lstat --min».
+	paths := collectPositionals(fs, args)
 
 	st, _, _, err := store.Open(false)
 	if err != nil {
 		die("%v", err)
 	}
 
-	values, skipped := collectStoreValues(st, minLen, withHistory)
-	bins := collectBinaryValues(st, minLen, withHistory)
+	scope := storeScope{minLen: minLen, withHistory: withHistory, includeConfig: includeConfig}
+	values, skips := collectStoreValues(st, scope)
+	bins := collectBinaryValues(st, scope)
 	if len(values) == 0 && len(bins) == 0 {
 		fmt.Fprintln(os.Stderr, "sec: нет значений для поиска (все короче --min либо стор пуст)")
 		return 0
 	}
-	if skipped > 0 {
-		fmt.Fprintf(os.Stderr, "sec: пропущено значений короче %d символов: %d (искать всё: --min 1)\n", minLen, skipped)
-	}
+	reportScanSkips(skips, minLen)
 
 	var leaks []leak
 

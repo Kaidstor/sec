@@ -82,7 +82,7 @@ func metaCommand(args []string) int {
 	var note, kind, rotateURL, rotateEvery, expires string
 	var clear, asJSON bool
 	fs.StringVar(&note, "note", "", "описание/назначение (без секрета)")
-	fs.StringVar(&kind, "kind", "", "тип: password|apikey|totp|env|...")
+	fs.StringVar(&kind, "kind", "", "тип: password|apikey|totp|file|config|env|...")
 	fs.StringVar(&rotateURL, "rotate-url", "", "где крутить секрет")
 	fs.StringVar(&rotateEvery, "rotate-every", "", "интервал ротации, напр. 90d")
 	fs.StringVar(&expires, "expires", "", "дедлайн: дата YYYY-MM-DD или интервал от сейчас (30d)")
