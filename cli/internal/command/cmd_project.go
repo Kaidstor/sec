@@ -389,6 +389,9 @@ func runCommand(args []string) int {
 		die("%v", err)
 	}
 	for k, v := range fenv {
+		if _, clash := extra[k]; clash {
+			fmt.Fprintf(os.Stderr, "sec: env-ключ %s из стора перекрыт --file — в env уйдёт путь файла, не значение\n", k)
+		}
 		extra[k] = v // путь файла поверх одноимённого секрета: --file — явное намерение
 	}
 	if verbose {
