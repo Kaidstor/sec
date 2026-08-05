@@ -1,0 +1,49 @@
+@import "tailwindcss";
+
+@theme {
+  --font-mono: "SF Mono", ui-monospace, "JetBrains Mono", Menlo, monospace;
+  --color-zinc-925: #101013;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  overscroll-behavior: none;
+}
+
+body {
+  user-select: none;
+  cursor: default;
+  /* themed via --color-zinc-* overrides on <html> (see lib/themes.ts) */
+  background: var(--color-zinc-950);
+}
+
+input,
+textarea,
+.selectable {
+  user-select: text;
+  cursor: auto;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--color-zinc-700) 70%, transparent);
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-zinc-600);
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}

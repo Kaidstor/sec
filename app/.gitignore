@@ -1,0 +1,6 @@
+node_modules
+dist
+# релизные переменные: сам файл не коммитим (конвенция как в sql-kai), образец — .env.example
+.env
+.env.*
+!.env.example

@@ -123,6 +123,10 @@ sec scan --staged
 - **Автодополнение** — `sec completion zsh|bash|fish`: динамическое дополнение
   проектов, ключей (`proj/<TAB>`) и инстансов в терминале (удобство для человека,
   не для агента).
+- **Desktop-приложение** — [`app/`](app/): Tauri-клиент поверх CLI (поиск,
+  копирование через `--clip`, история, share одного ключа или пака, темы).
+  Установка: `brew install --cask kaidstor/tap/sec-app` (CLI приедет
+  зависимостью). Есть и Raycast-расширение — [`raycast/`](raycast/).
 
 Полный справочник команд — [`cli/README.md`](cli/README.md).
 
