@@ -55,3 +55,9 @@ func execSpawn(path string, argv, env []string) (int, error) {
 	}
 	return 0, nil
 }
+
+// localShellCmd — команда, исполняющая shell-скрипт на этой машине (deploy:
+// локальный --sudo и --after). Пара к localShellCmd из exec_windows.go.
+func localShellCmd(script string) *exec.Cmd {
+	return exec.Command("sh", "-c", script)
+}

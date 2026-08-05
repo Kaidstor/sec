@@ -13,19 +13,38 @@ import (
 	"strings"
 
 	"github.com/kaidstor/sec/internal/audit"
+	"github.com/kaidstor/sec/internal/dotenv"
 	"github.com/kaidstor/sec/internal/store"
 )
 
 // diffCommand сравнивает два проекта по ключам и отпечаткам — какие ключи
 // совпадают по значению, различаются или есть только в одном. Значения не
 // раскрываются. Удобно свериться «staging == prod» без утечки.
+// Второй аргумент может быть и env-файлом ([user@]host:/путь или локальный
+// путь) — тогда стор сверяется с ним (см. diffAgainstFile).
 func diffCommand(args []string) int {
 	// -e может стоять после позиционных аргументов (sec diff svc -e a b), поэтому
 	// собираем позиционные и флаги в любом порядке.
 	fs := flag.NewFlagSet("diff", flag.ExitOnError)
+	var sudo bool
+	var only string
+	fs.BoolVar(&sudo, "sudo", false, "читать файл на хосте под sudo (root-овые прод-конфиги)")
+	fs.StringVar(&only, "only", "", "сверять только перечисленные ключи (через запятую)")
 	getEnv := addEnvFlag(fs)
 	pos := collectPositionals(fs, args)
 	env := getEnv()
+
+	// Файловый режим проверяем первым: иначе `sec diff svc host:/path -e prod`
+	// уехал бы в ветку сравнения двух инстансов. Цена — файл в текущей папке,
+	// названный ровно как инстанс, победит инстанс (та же неоднозначность, что
+	// у sec import).
+	if len(pos) == 2 && looksLikeEnvTarget(pos[1]) {
+		return diffAgainstFile(pos[0], pos[1], env, only, sudo)
+	}
+	if only != "" || sudo {
+		die("--only/--sudo работают только при сверке с env-файлом: sec diff <proj> <host>:/путь")
+	}
+
 	var pa, pb string
 	switch {
 	case env != "" && len(pos) == 2:
@@ -83,6 +102,64 @@ func diffCommand(args []string) int {
 		return 2
 	}
 	return 0
+}
+
+// diffAgainstFile сверяет проект с env-файлом — локальным или на хосте по ssh.
+// Только чтение: ничего не пишет ни в стор, ни в файл. Значения не
+// раскрываются, кроме ключей kind: config (см. envdiff.go).
+func diffAgainstFile(service, target, explicitEnv, only string, sudo bool) int {
+	t, err := parseEnvTarget(target)
+	if err != nil {
+		die("%v", err)
+	}
+	env := resolvedEnv(explicitEnv, service)
+	proj := resolveProj(service, env)
+
+	st, mkey, _, err := store.Open(false)
+	if err != nil {
+		die("%v", err)
+	}
+	keys := envKeysOf(st, proj, only)
+
+	data, exists, err := t.read(sudo)
+	if err != nil {
+		die("чтение %s: %v", t, err)
+	}
+	if !exists {
+		die("%s: файла нет (проверь путь; sudo для root-овых каталогов — --sudo)", t)
+	}
+	if ml := dotenv.MultilineKeys(string(data)); len(ml) > 0 {
+		fmt.Fprintf(os.Stderr, "sec: в %s многострочные значения (%s) — сверка по ним неверна, а sec deploy на таком файле откажется работать\n",
+			t, strings.Join(ml, ", "))
+	}
+	fileKV := parseEnvTargetFile(t, data)
+	if only != "" { // иначе каждый несравниваемый ключ файла попал бы в «только на хосте»
+		for k := range fileKV {
+			if _, ok := keys[k]; !ok {
+				delete(fileKV, k)
+			}
+		}
+	}
+
+	c := printEnvDiff(compareEnvFile(keys, fileKV, mkey), t, false)
+	audit.Record("diff", proj, "↔ "+t.String())
+	// Ненулевой код — только на то, что применил бы deploy. Ключи, которых нет в
+	// сторе, для прод-конфига норма (их патчит CI), и падать на них значило бы
+	// сделать команду непригодной как гейт.
+	if c.changed() {
+		return 2
+	}
+	return 0
+}
+
+// parseEnvTargetFile разбирает содержимое цели, отправляя предупреждения парсера
+// в stderr с указанием, чей это файл.
+func parseEnvTargetFile(t envTarget, data []byte) map[string]string {
+	kv, warns := dotenv.Parse(string(data))
+	for _, w := range warns {
+		fmt.Fprintf(os.Stderr, "sec: %s: %s\n", t, w)
+	}
+	return kv
 }
 
 // verifyCommand сверяет переданное значение с сохранённым, не раскрывая ни то,

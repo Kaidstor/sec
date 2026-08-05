@@ -86,3 +86,14 @@ func batArg(a string) (string, error) {
 	}
 	return `"` + a + `"`, nil
 }
+
+// localShellCmd — команда, исполняющая shell-скрипт на этой машине (deploy
+// --after). Скрипт пишет пользователь целиком, поэтому отдаём его cmd.exe как
+// есть: собственного квотирования тут нет и быть не должно.
+func localShellCmd(script string) *exec.Cmd {
+	comspec := os.Getenv("ComSpec")
+	if comspec == "" {
+		comspec = filepath.Join(os.Getenv("SystemRoot"), "System32", "cmd.exe")
+	}
+	return exec.Command(comspec, "/d", "/s", "/c", script)
+}
