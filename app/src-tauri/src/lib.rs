@@ -129,7 +129,7 @@ pub fn run() {
             // загрузка), показать его самим, чтобы не осталось невидимым
             let handle = app.handle().clone();
             std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_secs(4));
+                std::thread::sleep(std::time::Duration::from_secs(1));
                 if let Some(win) = handle.get_webview_window("main") {
                     if !win.is_visible().unwrap_or(true) {
                         reveal_window(&handle);

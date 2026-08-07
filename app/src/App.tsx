@@ -21,18 +21,14 @@ export default function App() {
   // Стор могли поменять из CLI, пока окно было в фоне.
   useEffect(() => onWindowFocus(() => void refresh()), [refresh]);
 
-  // Окно создано скрытым (visible: false) — показываем после первого
-  // отрисованного кадра, чтобы не было «растягивания» геометрии на старте.
+  // Окно создано скрытым (visible: false) — показываем после коммита
+  // React-дерева. Не ждать rAF: у скрытого окна WKWebView не рисует кадры,
+  // колбэк не вызовется и показ уйдёт в 4-секундную страховку в lib.rs.
   useEffect(() => {
-    const outer = requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        // Фокус ставим только после показа окна: скрытый вебвью его не удержит.
-        void invoke("reveal_main_window")
-          .catch(() => {})
-          .finally(() => document.getElementById("search")?.focus());
-      });
-    });
-    return () => cancelAnimationFrame(outer);
+    // Фокус ставим только после показа окна: скрытый вебвью его не удержит.
+    void invoke("reveal_main_window")
+      .catch(() => {})
+      .finally(() => document.getElementById("search")?.focus());
   }, []);
 
   // ⌘F/⌘K — в поиск, ⌘N — новый секрет, ⌘R — обновить, ⌘, — настройки
