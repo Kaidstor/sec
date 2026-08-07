@@ -25,7 +25,10 @@ export default function App() {
   useEffect(() => {
     const outer = requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        void invoke("reveal_main_window").catch(() => {});
+        // Фокус ставим только после показа окна: скрытый вебвью его не удержит.
+        void invoke("reveal_main_window")
+          .catch(() => {})
+          .finally(() => document.getElementById("search")?.focus());
       });
     });
     return () => cancelAnimationFrame(outer);
