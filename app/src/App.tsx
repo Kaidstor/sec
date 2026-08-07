@@ -5,6 +5,7 @@ import { SecretList } from "./components/SecretList";
 import { AddSecretDialog, EditSecretDialog, GenerateSecretDialog } from "./components/dialogs/forms";
 import { HistoryDialog, LinksDialog, SettingsDialog, ShareDialog } from "./components/dialogs/panels";
 import { ConfirmDialog, IconButton, RefreshButton, cn } from "./components/ui";
+import { isKey } from "./lib/keys";
 import { isMac } from "./lib/platform";
 import { plural } from "./lib/plural";
 import { dragWindow, onWindowFocus } from "./lib/window";
@@ -34,20 +35,23 @@ export default function App() {
     return () => cancelAnimationFrame(outer);
   }, []);
 
-  // ⌘F/⌘K — в поиск, ⌘N — новый секрет, ⌘R — обновить
+  // ⌘F/⌘K — в поиск, ⌘N — новый секрет, ⌘R — обновить, ⌘, — настройки
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const mod = isMac ? e.metaKey : e.ctrlKey;
       if (!mod) return;
-      if (e.key === "f" || e.key === "k") {
+      if (isKey(e, "f") || isKey(e, "k")) {
         e.preventDefault();
         document.getElementById("search")?.focus();
-      } else if (e.key === "n") {
+      } else if (isKey(e, "n")) {
         e.preventDefault();
         openDialog({ type: "add" });
-      } else if (e.key === "r") {
+      } else if (isKey(e, "r")) {
         e.preventDefault();
         void refresh();
+      } else if (e.key === "," || e.code === "Comma") {
+        e.preventDefault();
+        openDialog({ type: "settings" });
       }
     };
     window.addEventListener("keydown", onKey);
@@ -115,7 +119,7 @@ export default function App() {
           </span>
         )}
         <button
-          title="Настройки"
+          title="Настройки (⌘,)"
           onClick={() => openDialog({ type: "settings" })}
           className={cn("flex items-center gap-1 rounded px-1.5 py-0.5 transition-colors hover:bg-zinc-800/80 hover:text-zinc-300", !toast && "ml-auto")}
         >
