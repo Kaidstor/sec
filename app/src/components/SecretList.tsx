@@ -58,8 +58,9 @@ export function SecretList() {
   }
 
   const projects = Object.keys(data).sort();
-  // Последний использованный проект — первой секцией: скопировал значение,
-  // вернулся — ключи того же проекта снова под рукой без поиска.
+  // Проект прошлого сеанса — первой секцией. Порядок фиксируется на запуске
+  // (rememberProject не трогает стейт): пока окно открыто, список не прыгает,
+  // серию login+pass можно копировать с одного места.
   if (lastProject && projects.includes(lastProject)) {
     projects.splice(projects.indexOf(lastProject), 1);
     projects.unshift(lastProject);

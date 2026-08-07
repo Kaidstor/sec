@@ -69,9 +69,10 @@ export const useApp = create<AppState>((set, get) => ({
 
   setFilter: (v) => set({ filter: v }),
 
+  // Только localStorage: lastProject в стейте читается один раз на старте,
+  // иначе секция прыгает наверх прямо под курсором при копировании.
   rememberProject: (p) => {
     localStorage.setItem(LAST_PROJECT_KEY, p);
-    set({ lastProject: p });
   },
 
   showToast: (message, kind = "error") => {
