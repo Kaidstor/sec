@@ -1,6 +1,6 @@
 [package]
 name = "sec-app"
-version = "0.2.0"
+version = "0.2.1"
 description = "sec — локальный менеджер секретов"
 authors = ["kaidstor"]
 edition = "2021"
