@@ -1,3 +1,4 @@
+import { getVersion } from "@tauri-apps/api/app";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { ArrowDown, ArrowUp, Check, CheckCircle2, Copy, Redo2, Undo2, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
@@ -17,6 +18,7 @@ import {
   splitProject,
 } from "../../lib/sec";
 import { THEMES, Theme } from "../../lib/themes";
+import { useUpdater } from "../../lib/updater";
 import { useApp } from "../../store";
 import { Button, Dialog, Field, Select, cn } from "../ui";
 
@@ -292,13 +294,18 @@ function ThemeCard({ theme, active, onPick }: { theme: Theme; active: boolean; o
 
 export function SettingsDialog() {
   const { openDialog, themeId, setTheme } = useApp();
+  const { checking, checkForUpdates } = useUpdater();
   const [version, setVersion] = useState("");
+  const [appVersion, setAppVersion] = useState("");
   const close = () => openDialog(null);
 
   useEffect(() => {
     runSec(["version"])
       .then((v) => setVersion(v.trim()))
       .catch((err) => setVersion(String(err)));
+    getVersion()
+      .then(setAppVersion)
+      .catch(() => {});
   }, []);
 
   return (
@@ -313,8 +320,16 @@ export function SettingsDialog() {
           </div>
         </div>
         <div>
-          <div className="mb-1.5 text-[11px] font-semibold tracking-wider text-zinc-500">CLI</div>
-          <div className="selectable font-mono text-[11px] text-zinc-400">{version || "…"}</div>
+          <div className="mb-1.5 text-[11px] font-semibold tracking-wider text-zinc-500">ВЕРСИИ</div>
+          <div className="flex items-center justify-between gap-2">
+            <div className="selectable font-mono text-[11px] text-zinc-400">
+              {appVersion && <div>app {appVersion}</div>}
+              <div>{version || "…"}</div>
+            </div>
+            <Button disabled={checking} onClick={() => void checkForUpdates(true)}>
+              {checking ? "Проверка…" : "Проверить обновления"}
+            </Button>
+          </div>
         </div>
         <div className="flex justify-end">
           <Button variant="primary" onClick={close}>

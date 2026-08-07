@@ -27,7 +27,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src ipc: http://ipc.localhost; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'",
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src ipc: http://ipc.localhost https://api.github.com; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'",
       "devCsp": "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:; connect-src 'self' ws://localhost:1430 http://localhost:1430 ipc: http://ipc.localhost"
     }
   },
@@ -49,8 +49,11 @@
   },
   "plugins": {
     "updater": {
+      "active": true,
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEUyN0I2MTRCNDhGQTk2M0QKUldROWx2cElTMkY3NHVQZTN1dmtQUG8xMWtyUzNpeUhEWW50REd1aWVvOFJMV1N0cUZVZ2NrTlIK",
-      "endpoints": []
+      "endpoints": [
+        "https://github.com/Kaidstor/sec/releases/latest/download/latest.json"
+      ]
     }
   }
 }

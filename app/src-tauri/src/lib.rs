@@ -110,11 +110,38 @@ fn reveal_main_window(app: tauri::AppHandle) {
     reveal_window(&app);
 }
 
+/// Перезапуск после установки обновления. На macOS — `open -n` на бандл:
+/// app.restart() порождает процесс мимо LaunchServices, и новое окно
+/// оказывается позади остальных.
+#[tauri::command]
+fn relaunch_app(app: tauri::AppHandle) {
+    #[cfg(target_os = "macos")]
+    {
+        // …/sec.app/Contents/MacOS/sec → …/sec.app
+        let bundle = std::env::current_exe().ok().and_then(|exe| {
+            let b = exe.ancestors().nth(3)?;
+            b.extension()
+                .is_some_and(|e| e == "app")
+                .then(|| b.to_path_buf())
+        });
+        if let Some(bundle) = bundle {
+            let spawned = Command::new("open").arg("-n").arg(&bundle).spawn().is_ok();
+            if spawned {
+                app.exit(0);
+                return;
+            }
+        }
+    }
+    // Вне бандла (dev-запуск) или не macOS — обычный рестарт.
+    app.restart();
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(
             tauri_plugin_window_state::Builder::new()
                 .with_state_flags(
@@ -138,7 +165,7 @@ pub fn run() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![run_sec, reveal_main_window])
+        .invoke_handler(tauri::generate_handler![run_sec, reveal_main_window, relaunch_app])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

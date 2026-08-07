@@ -39,6 +39,11 @@ archives:
 checksum:
   name_template: "checksums.txt"
 
+release:
+  # Апдейтер приложения читает releases/latest/download/latest.json, а latest.json
+  # лежит только на app-v*-релизах: CLI-релиз, ставший latest, ломает автообновление.
+  make_latest: false
+
 changelog:
   use: github
   sort: asc

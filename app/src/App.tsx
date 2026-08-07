@@ -2,10 +2,13 @@ import { invoke } from "@tauri-apps/api/core";
 import { Link2, Plus, Search, Settings, Zap } from "lucide-react";
 import { useEffect } from "react";
 import { SecretList } from "./components/SecretList";
+import { UpdateToast } from "./components/UpdateToast";
+import { WhatsNewDialog } from "./components/WhatsNewDialog";
 import { AddSecretDialog, EditSecretDialog, GenerateSecretDialog } from "./components/dialogs/forms";
 import { HistoryDialog, LinksDialog, SettingsDialog, ShareDialog } from "./components/dialogs/panels";
 import { ConfirmDialog, IconButton, RefreshButton, cn } from "./components/ui";
 import { isKey } from "./lib/keys";
+import { initUpdater } from "./lib/updater";
 import { isMac } from "./lib/platform";
 import { plural } from "./lib/plural";
 import { dragWindow, onWindowFocus } from "./lib/window";
@@ -20,6 +23,8 @@ export default function App() {
 
   // Стор могли поменять из CLI, пока окно было в фоне.
   useEffect(() => onWindowFocus(() => void refresh()), [refresh]);
+
+  useEffect(() => initUpdater(), []);
 
   // Окно создано скрытым (visible: false) — показываем после коммита
   // React-дерева. Не ждать rAF: у скрытого окна WKWebView не рисует кадры,
@@ -131,6 +136,8 @@ export default function App() {
       {dialog?.type === "links" && <LinksDialog />}
       {dialog?.type === "settings" && <SettingsDialog />}
       <ConfirmDialog />
+      <UpdateToast />
+      <WhatsNewDialog />
     </div>
   );
 }
