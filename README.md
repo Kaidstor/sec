@@ -17,13 +17,6 @@
 
 ## Установка
 
-**Скилл** (инструкции для агента — Claude Code, Cursor и др.) через
-[skills.sh](https://skills.sh):
-
-```sh
-npx skills add kaidstor/sec
-```
-
 **CLI** (сам бинарь `sec`) через Homebrew — Go не нужен:
 
 ```sh
@@ -31,8 +24,19 @@ brew install kaidstor/tap/sec
 sec version
 ```
 
-`npx skills` ставит только `SKILL.md`; бинарь `sec` — отдельно через brew (или
-из исходников для разработки, см. [`cli/README.md`](cli/README.md#из-исходников-нужен-go)).
+**Скилл** (инструкции для агента — Claude Code, Codex и др.) встроен в бинарь
+и на macOS раскладывается сам при `brew install`/`upgrade`. Руками — одной
+командой (`sec skills status` покажет, что установлено):
+
+```sh
+sec skills install
+```
+
+Копии скилла помечаются стампом и дальше обновляются автоматически при каждом
+запуске `sec` — версия скилла всегда совпадает с версией CLI. Альтернатива без
+бинаря — `npx skills add kaidstor/sec` через [skills.sh](https://skills.sh)
+(ставит только `SKILL.md`, обновляется тоже только руками); такие установки
+самообновление не трогает.
 
 **Windows**: готовый `sec.exe` — в zip-архиве на
 [GitHub Releases](https://github.com/kaidstor/sec/releases) (`sec_<версия>_windows_amd64.zip`

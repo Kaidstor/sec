@@ -86,3 +86,10 @@ homebrew_casks:
           if OS.mac?
             system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/sec"]
           end
+      # Раскладка агентского скилла (sec skills install) при каждом
+      # install/upgrade: копии в ~/.claude и ~/.codex обновляются вместе с CLI.
+      post:
+        install: |
+          if OS.mac?
+            system_command "#{staged_path}/sec", args: ["skills", "install"], must_succeed: false
+          end

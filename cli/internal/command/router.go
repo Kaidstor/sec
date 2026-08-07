@@ -303,6 +303,7 @@ Windows Credential Manager (fallback: env SEC_KEY / файл).
   sec log [proj[/KEY]] [-n 20] [--all] журнал обращений (кто/когда/что, без значений)
   sec info [--json]                    путь к хранилищу, бэкенд ключа, статистика
   sec stats [--days 14] [--json]       что из CLI реально используется, а что ни разу
+  sec skills install|status            агентский скилл sec у Claude/Codex (дальше обновляется сам)
   sec completion zsh|bash|fish         скрипт автодополнения для шелла
   sec version                          версия CLI и платформа
 
@@ -454,6 +455,9 @@ func Run(args []string) int {
 		return 2
 	}
 	recordUsage(args)
+	// самолечение агентского скилла до switch: `sec run` замещает процесс
+	// (syscall.Exec) и в пост-хук не вернулся бы
+	syncSkillsStale(args[0])
 	switch args[0] {
 	case "-h", "--help", "help":
 		fmt.Print(usage)
@@ -542,6 +546,8 @@ func Run(args []string) int {
 		return infoCommand(args[1:])
 	case "stats":
 		return statsCommand(args[1:])
+	case "skills":
+		return skillsCommand(args[1:])
 	default:
 		die("неизвестная команда %q (sec --help)", args[0])
 		return 2 // die() уже вызвал os.Exit; return для компилятора
