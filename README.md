@@ -1,265 +1,290 @@
 # sec
 
-Локальный менеджер секретов для проектов, сделанный под **безопасную работу с
-агентами** (Claude Code и др.): значения секретов никогда не появляются в argv,
-истории shell и чате агента. Ввод — скрытый / из stdin / из буфера обмена;
-потребление — через env-инъекцию (`run`) или запись в файл (`export`).
+A local secrets manager for projects, built for **agent-safe workflows**
+(Claude Code and friends): secret values never appear on argv, in shell
+history, or in an agent's chat transcript. Input is hidden / from stdin /
+from the clipboard; consumption is env injection (`run`) or writing to a
+file (`export`).
 
-Хранилище — один файл, целиком зашифрованный XChaCha20-Poly1305; мастер-ключ
-лежит отдельно (macOS Keychain / Secret Service на Linux / Credential Manager
-на Windows / env / файл),
-переносимые бэкапы — под passphrase через Argon2id (подробности —
-[«Криптография»](#криптография)). Это инструмент, который работает **локально
-на устройстве** — не сервис и не часть CI: секреты не покидают машину.
-Единственное исключение — `sec share` (передача секрета по одноразовой
-ссылке): наружу уходит **только шифротекст**, ключ расшифровки рождается
-локально и живёт во фрагменте URL, который серверу не отправляется.
+The store is a single file encrypted whole with XChaCha20-Poly1305; the
+master key lives separately (macOS Keychain / Secret Service on Linux /
+Credential Manager on Windows / env / file), and portable backups are
+passphrase-protected via Argon2id (details in
+[Cryptography](#cryptography)). This is a tool that works **locally on your
+device** — not a service and not part of CI: secrets never leave the
+machine. The one exception is `sec share` (handing a secret over via a
+one-time link): only **ciphertext** leaves the machine, and the decryption
+key is generated locally and lives in the URL fragment, which is never sent
+to the server.
 
-## Установка
+## Installation
 
-**CLI** (сам бинарь `sec`) через Homebrew — Go не нужен:
+**CLI** (the `sec` binary) via Homebrew — no Go required:
 
 ```sh
 brew install kaidstor/tap/sec
 sec version
 ```
 
-**Скилл** (инструкции для агента — Claude Code, Codex и др.) встроен в бинарь
-и на macOS раскладывается сам при `brew install`/`upgrade`. Руками — одной
-командой (`sec skills status` покажет, что установлено):
+Via **Nix** (flakes):
+
+```sh
+nix profile install github:kaidstor/sec
+```
+
+**Agent skill** (instructions for Claude Code, Codex, and other coding
+agents) is embedded in the binary and unpacks itself on macOS during
+`brew install`/`upgrade`. Manually — one command (`sec skills status` shows
+what is installed):
 
 ```sh
 sec skills install
 ```
 
-Копии скилла помечаются стампом и дальше обновляются автоматически при каждом
-запуске `sec` — версия скилла всегда совпадает с версией CLI. Альтернатива без
-бинаря — `npx skills add kaidstor/sec` через [skills.sh](https://skills.sh)
-(ставит только `SKILL.md`, обновляется тоже только руками); такие установки
-самообновление не трогает.
+Installed skill copies are stamped and then update automatically on every
+`sec` run — the skill version always matches the CLI version. A binary-free
+alternative is `npx skills add kaidstor/sec` via
+[skills.sh](https://skills.sh) (installs `SKILL.md` only and updates only by
+hand); self-update leaves those installations alone.
 
-**Windows**: готовый `sec.exe` — в zip-архиве на
-[GitHub Releases](https://github.com/kaidstor/sec/releases) (`sec_<версия>_windows_amd64.zip`
-или `arm64`); распакуй и положи в папку из `PATH`. Мастер-ключ хранится в
-Credential Manager, хранилище — `%LOCALAPPDATA%\sec\store.enc`, файл ключа
-(fallback) — `%APPDATA%\sec\key`.
+**Windows**: a prebuilt `sec.exe` ships in a zip archive on
+[GitHub Releases](https://github.com/kaidstor/sec/releases)
+(`sec_<version>_windows_amd64.zip` or `arm64`); unpack it into a directory
+on `PATH`. The master key is kept in Credential Manager, the store lives at
+`%LOCALAPPDATA%\sec\store.enc`, the key file (fallback) at
+`%APPDATA%\sec\key`.
 
-## Быстрый старт
+## Quick start
 
 ```sh
-# внутри папки проекта: запустить дев-сервер с его секретами
+# inside a project directory: start the dev server with its secrets
 sec run -- just dev
 
-# завести секрет, не увидев значения (пользователь скопировал в буфер)
+# save a secret without ever seeing the value (user copied it to the clipboard)
 sec set whois/API_TOKEN --clipboard --clear
 
-# затащить существующий .env или JSON в хранилище
+# pull an existing .env or JSON into the store
 sec import whois path/to/.env
 cat creds.json | sec import whois
 
-# безопасно показать вывод команды, в котором может быть секрет
-just dev 2>&1 | sec redact       # значения → [redacted:proj/KEY]
+# safely show command output that might contain a secret
+just dev 2>&1 | sec redact       # values → [redacted:proj/KEY]
 
-# проверить перед коммитом, что секрет не утёк в индекс
+# before committing, check that no secret leaked into the index
 sec scan --staged
 ```
 
-## Что умеет
+## What it does
 
-- **Ввод без утечки** — `set` (скрытый ввод / stdin / буфер / файл
-  `--from-file`, включая бинарные сертификаты и ключи), `gen`
-  (сгенерировать пароль/токен, не показывая).
-- **Потребление без раскрытия** — `run` (env-инъекция в процесс), `export` /
-  `render` (в файл 0600), `get --out` (файловые секреты обратно в файл, с
-  исходными именем и правами), `otp` (TOTP/HOTP-коды из сохранённого seed).
-  `--file`/`--out` (export/render/get) умеют и scp-адрес `host:/путь` — запись
-  сразу на удалённый хост через stdin ssh.
-- **Файловые секреты** — сертификат/ключ/keystore живёт в сторе, а не на диске:
-  `run --file KEY -- cmd` разворачивает его во временный файл 0600 на время
-  команды и отдаёт путь в env-переменной (паттерн systemd `LoadCredential`);
-  в env-инъекцию `run`/`export` ключи `kind: file` по умолчанию не попадают
-  (`--include-files` вернёт). Что кладётся в переменную, зачем бывает нужна
-  форма `--file ENV=KEY` и почему `scan` шумит на конфиге из `import` —
-  [«Файловые секреты, шум scan и порог `--min`»](https://notes.kaidstor.ru/91930e46-fe4b-4ca9-a58f-70432f409bdc)
-  ([`docs/file-secrets-and-scan.md`](docs/file-secrets-and-scan.md)).
-- **Сверка без раскрытия** — `peek` / `fingerprint` / `verify` / `diff`
-  (отпечатки, безопасные для чата).
-- **Конфиги на хосте** — `diff <proj> <host>:/app/.env` показывает, чем стор
-  разошёлся с прод-конфигом (только чтение, значения не раскрываются), а
-  `deploy --to <host>:/app/.env` применяет стор **мержем**: обновляет свои
-  ключи, а чужие, порядок строк и комментарии файла не трогает. Плюс `--sudo`
-  для root-овых конфигов, бэкап на хосте, сверка отпечатков после записи и
-  `--after` для рестарта сервиса — подробности в
-  [`docs/deploy.md`](docs/deploy.md).
-- **Поиск** — `find <шаблон>` (по всему хранилищу → `proj/KEY`) и
-  `ls --filter` (сузить список): подстрока или glob, чтобы не листать стор
-  целиком.
-- **История и ротация** — `history`, `undo`/`redo`, `forget`, метаданные
-  ротации (`meta`, `stale`), здоровье стора (`doctor`).
-- **Защита от утечки** — `scan` (найти сохранённые значения в файлах / git-диффе)
-  и `redact` (вычистить их из произвольного текста → безопасный вывод).
-  Значения, помеченные `--kind config` (endpoint, размер кэша, список
-  провайдеров), не секреты: их `scan`/`redact` не ищут (`--include-config`
-  вернёт), а `diff`/`deploy` показывают открытым текстом.
-- **Общие значения** — `link` / `extend` (ссылки и наследование пачек, единый
-  источник правды без копирования); `set`/`gen`/`import` сами замечают, что
-  записанное значение уже лежит под другим адресом, и подсказывают готовый
-  `sec link` (все накопившиеся дубли — `doctor`).
-- **Профили** — `proj@profile` (как `pkg@version` в npm): несколько наборов
-  значений одних ключей (компании, стенды) под одним сервисом —
-  `sec run bot@max -- …`; дефолтный профиль объявляется в `.sec`.
-- **Передача по ссылке** — `share`: одноразовая (или с TTL до 7 дней) ссылка
-  на секрет, значение со stdin, файл или целый пак — `sec share <proj> --all`
-  (или `--only A,B`): получатель видит список ключей, копирует по одному или
-  скачивает готовый `.env`, файловые ключи — отдельными файлами.
-  Шифруется локально (AES-256-GCM),
-  сервер хранит только шифротекст; ключ — во фрагменте URL, расшифровка — в
-  браузере получателя. Self-hosted сервер — [`server/`](server/), готовый
-  инстанс: `sec share setup <url>` с токеном, выпущенным на сервере.
-  Как это устроено внутри —
-  [«sec share: одноразовые ссылки»](https://notes.kaidstor.ru/6982ea92-d6d2-4183-baf4-37d9c8e3acd5)
-  ([`docs/share.md`](docs/share.md)).
-- **Перенос и синхронизация** — `backup` / `restore` / `sync` (переносимый блоб
-  под passphrase), `rekey` (ротация мастер-ключа), мост с **Infisical**.
-- **Что реально используется** — `sec stats`: локальный счётчик запусков команд
-  и флагов с разбивкой по дням, и главное — список того, что заведено, но не
-  применялось ни разу. Только имена команд и флагов, никаких значений, целиком
-  на машине (выключается `SEC_NO_USAGE=1`).
-- **Автодополнение** — `sec completion zsh|bash|fish`: динамическое дополнение
-  проектов, ключей (`proj/<TAB>`) и профилей (`proj@<TAB>`) в терминале
-  (удобство для человека, не для агента).
-- **Desktop-приложение** — [`app/`](app/): Tauri-клиент поверх CLI (поиск,
-  копирование через `--clip`, история, share одного ключа или пака, темы).
-  Установка: `brew install --cask kaidstor/tap/sec-app` (CLI приедет
-  зависимостью). Есть и Raycast-расширение — [`raycast/`](raycast/).
+- **Leak-free input** — `set` (hidden input / stdin / clipboard / a file via
+  `--from-file`, including binary certificates and keys), `gen` (generate a
+  password/token without ever displaying it).
+- **Consumption without disclosure** — `run` (env injection into the
+  process), `export` / `render` (to a 0600 file), `get --out` (file secrets
+  back onto disk with their original name and permissions), `otp`
+  (TOTP/HOTP codes from a stored seed). `--file`/`--out`
+  (export/render/get) also accept an scp-style `host:/path` — writing
+  straight to a remote host over ssh stdin.
+- **File secrets** — a certificate/key/keystore lives in the store, not on
+  disk: `run --file KEY -- cmd` materializes it into a temporary 0600 file
+  for the command's lifetime and hands the path over in an env variable
+  (the systemd `LoadCredential` pattern); `kind: file` keys stay out of
+  `run`/`export` env injection by default (`--include-files` brings them
+  back). What goes into the variable, when the `--file ENV=KEY` form is
+  useful, and why `scan` is noisy about imported config — see
+  [`docs/file-secrets-and-scan.md`](docs/file-secrets-and-scan.md) (in Russian).
+- **Comparison without disclosure** — `peek` / `fingerprint` / `verify` /
+  `diff` (fingerprints that are safe to paste into a chat).
+- **Configs on remote hosts** — `diff <proj> <host>:/app/.env` shows how the
+  store diverged from a production config (read-only, values are never
+  revealed), and `deploy --to <host>:/app/.env` applies the store as a
+  **merge**: it updates its own keys and leaves foreign keys, line order,
+  and comments untouched. Plus `--sudo` for root-owned configs, a backup on
+  the host, post-write fingerprint verification, and `--after` to restart
+  the service — details in [`docs/deploy.md`](docs/deploy.md) (in Russian).
+- **Search** — `find <pattern>` (across the whole store → `proj/KEY`) and
+  `ls --filter` (narrow one listing): substring or glob, so you never have
+  to page through the store.
+- **History and rotation** — `history`, `undo`/`redo`, `forget`, rotation
+  metadata (`meta`, `stale`), store health (`doctor`).
+- **Leak protection** — `scan` (find stored values in files / a git diff)
+  and `redact` (scrub them out of arbitrary text → safe output). Values
+  marked `--kind config` (an endpoint, a cache size, a provider list) are
+  not secrets: `scan`/`redact` skip them (`--include-config` brings them
+  back) and `diff`/`deploy` show them in plain text.
+- **Shared values** — `link` / `extend` (links and pack inheritance: one
+  source of truth instead of copies); `set`/`gen`/`import` notice on their
+  own that a value already exists under another address and suggest a
+  ready-to-paste `sec link` (all accumulated duplicates — `doctor`).
+- **Profiles** — `proj@profile` (like `pkg@version` in npm): several value
+  sets for the same keys (companies, stages) under one service —
+  `sec run bot@max -- …`; the default profile is declared in `.sec`.
+- **Sharing via link** — `share`: a one-time link (or with a TTL up to
+  7 days) to a secret, a value from stdin, a file, or a whole pack —
+  `sec share <proj> --all` (or `--only A,B`): the recipient sees the key
+  list, copies values one by one or downloads a ready `.env`; file keys
+  come as separate files. Encrypted locally (AES-256-GCM), the server
+  stores ciphertext only; the key lives in the URL fragment and decryption
+  happens in the recipient's browser. Self-hosted server —
+  [`server/`](server/); point the CLI at yours with
+  `sec share setup <url>` and a server-issued token. How it works inside —
+  [`docs/share.md`](docs/share.md) (in Russian).
+- **Migration and sync** — `backup` / `restore` / `sync` (a portable
+  passphrase-protected blob), `rekey` (master key rotation), a bridge to
+  **Infisical**.
+- **What you actually use** — `sec stats`: a local counter of command and
+  flag invocations by day, and most importantly a list of what exists but
+  has never been used. Names of commands and flags only, no values, fully
+  on-machine (disable with `SEC_NO_USAGE=1`).
+- **Shell completion** — `sec completion zsh|bash|fish`: dynamic completion
+  of projects, keys (`proj/<TAB>`), and profiles (`proj@<TAB>`) in the
+  terminal (a convenience for humans; agents call `sec` non-interactively).
+- **Desktop app** — [`app/`](app/): a Tauri client on top of the CLI
+  (search, copy via `--clip`, history, sharing a key or a pack, themes).
+  Install: `brew install --cask kaidstor/tap/sec-app` (the CLI comes along
+  as a dependency). There is also a Raycast extension —
+  [`raycast/`](raycast/).
 
-Полный справочник команд — [`cli/README.md`](cli/README.md).
+The full command reference lives in [`cli/README.md`](cli/README.md)
+(currently in Russian).
 
 ## Raycast
 
-В [`raycast/`](raycast/README.md) — локальное Raycast-расширение (UI для
-человека): поиск по проектам/ключам, копирование значений и TOTP в буфер,
-добавление, редактирование и генерация секретов. Значения не проходят через
-расширение —
-буфер наполняет сам CLI (`--clip`), в UI только маски, отпечатки и метаданные.
+[`raycast/`](raycast/README.md) contains a local Raycast extension (a UI
+for humans): search across projects/keys, copying values and TOTP codes to
+the clipboard, adding, editing, and generating secrets. Values never pass
+through the extension — the CLI fills the clipboard itself (`--clip`); the
+UI only ever shows masks, fingerprints, and metadata.
 
 ```sh
-cd raycast && npm install && npm run dev   # импорт в Raycast, остаётся после Ctrl+C
+cd raycast && npm install && npm run dev   # imports into Raycast, survives Ctrl+C
 ```
 
-## Для агента
+## For agents
 
-Правила безопасной работы (что можно печатать в чат, как заводить и потреблять
-секреты, чем чистить вывод) описаны в [`SKILL.md`](SKILL.md) — это контракт,
-которому следует агент.
+The safety rules (what may be printed to a chat, how to create and consume
+secrets, how to scrub output) live in [`SKILL.md`](SKILL.md) (in Russian) —
+the contract a coding agent follows.
 
-## Криптография
+## Cryptography
 
-Только стандартные примитивы: `crypto/*` из stdlib Go и
+Standard primitives only: `crypto/*` from the Go stdlib and
 [`golang.org/x/crypto`](https://pkg.go.dev/golang.org/x/crypto) (argon2,
-chacha20poly1305) — вендорится в репозиторий, своей криптографии нет.
+chacha20poly1305) — vendored into the repository; there is no homegrown
+cryptography.
 
-| Что | Алгоритм | Параметры |
+| What | Algorithm | Parameters |
 | --- | --- | --- |
-| Файл хранилища | **XChaCha20-Poly1305** (AEAD) | ключ 256 бит, nonce 192 бита (случайный на каждую запись), тег 128 бит |
-| Мастер-ключ | `crypto/rand` (CSPRNG ОС) | 32 байта, хранится в hex64 |
-| Бэкап / sync под passphrase | **Argon2id** → XChaCha20-Poly1305 | 64 МиБ, t=3, p=4, соль 16 байт, ключ 32 байта |
-| Отпечатки (`fingerprint`, `diff`, `peek`) | **HMAC-SHA-256** под мастер-ключом | усечение до 64 бит |
-| Генерация значений (`gen`) | `crypto/rand` | равномерный выбор символа (`rand.Int`, без modulo bias) |
-| TOTP / HOTP (`otp`) | **HMAC-SHA-1 / SHA-256 / SHA-512** | RFC 6238 / RFC 4226, алгоритм/digits/period/counter из `otpauth://` URI |
+| Store file | **XChaCha20-Poly1305** (AEAD) | 256-bit key, 192-bit nonce (random per write), 128-bit tag |
+| Master key | `crypto/rand` (OS CSPRNG) | 32 bytes, stored as hex64 |
+| Passphrase backup / sync | **Argon2id** → XChaCha20-Poly1305 | 64 MiB, t=3, p=4, 16-byte salt, 32-byte key |
+| Fingerprints (`fingerprint`, `diff`, `peek`) | **HMAC-SHA-256** under the master key | truncated to 64 bits |
+| Value generation (`gen`) | `crypto/rand` | uniform character choice (`rand.Int`, no modulo bias) |
+| TOTP / HOTP (`otp`) | **HMAC-SHA-1 / SHA-256 / SHA-512** | RFC 6238 / RFC 4226; algorithm/digits/period/counter from the `otpauth://` URI |
 
-### Хранилище
+### The store
 
-Весь стор — один JSON-документ, зашифрованный целиком одним AEAD-вызовом; на
-диск он ложится так:
+The whole store is one JSON document encrypted in a single AEAD call; on
+disk it is laid out as:
 
 ```
-"SECSTOR2" (8 байт) │ nonce (24 байта) │ XChaCha20-Poly1305(JSON стора)
+"SECSTOR2" (8 bytes) │ nonce (24 bytes) │ XChaCha20-Poly1305(store JSON)
 ```
 
-Магия `SECSTOR2` идёт в **AAD**, поэтому заголовок аутентифицирован — подменить
-его, не сломав расшифровку, нельзя. Открытым текстом на диске не лежит ничего:
-ни имена проектов и ключей, ни история значений, ни метаданные. XChaCha20 взят
-ради 192-битного nonce — случайный nonce на каждую запись безопасен без учёта
-числа сохранений (в отличие от 96-битного у AES-GCM/ChaCha20-Poly1305).
-Файл 0600, запись атомарная (tmp + `rename`) под `flock`.
+The `SECSTOR2` magic goes into the **AAD**, so the header is authenticated —
+it cannot be tampered with without breaking decryption. Nothing sits on disk
+in plain text: not project or key names, not value history, not metadata.
+XChaCha20 was chosen for its 192-bit nonce — a random nonce per write is
+safe regardless of how many writes happen (unlike the 96-bit nonce of
+AES-GCM/ChaCha20-Poly1305). The file is 0600 and writes are atomic
+(tmp + `rename`) under `flock`.
 
-### Мастер-ключ
+### The master key
 
-32 случайных байта из CSPRNG ОС, создаются при первом `set`/`import`. Ищутся по
-порядку: env `SEC_KEY` → системное хранилище ОС (macOS Keychain, на Linux
-Secret Service через `secret-tool`, на Windows Credential Manager через
-advapi32) → файл `~/.config/sec/key` (0600; на Windows `%APPDATA%\sec\key`). В
-системное хранилище ключ передаётся через stdin утилиты либо нативный
-syscall — в `ps`/argv он не светится. Ключ **не выводится** из пароля
-пользователя: расшифровка не интерактивна, поэтому `sec run` работает в
-скриптах без промпта.
+32 random bytes from the OS CSPRNG, created on the first `set`/`import`.
+Looked up in order: env `SEC_KEY` → the OS secret store (macOS Keychain,
+Secret Service via `secret-tool` on Linux, Credential Manager via advapi32
+on Windows) → the file `~/.config/sec/key` (0600; `%APPDATA%\sec\key` on
+Windows). The key is handed to the OS store via the utility's stdin or a
+native syscall — it never shows up in `ps`/argv. The key is **not** derived
+from a user password: decryption is non-interactive, which is why `sec run`
+works in scripts without a prompt.
 
-`sec rekey` генерирует новый ключ и перешифровывает стор; порядок с откатом
-(сначала бэкенд ключа, потом стор) описан в
+`sec rekey` generates a new key and re-encrypts the store; the
+rollback-safe order (key backend first, then the store) is described in
 [`cli/README.md`](cli/README.md#ротация-мастер-ключа).
 
-### Бэкап, restore и sync
+### Backup, restore, and sync
 
-`backup` / `restore` / `sync` делают переносимый блоб, который не зависит от
-мастер-ключа: ключ выводится из passphrase через **Argon2id** (memory-hard,
-устойчив к перебору на GPU/ASIC).
+`backup` / `restore` / `sync` produce a portable blob independent of the
+master key: its key is derived from a passphrase via **Argon2id**
+(memory-hard, resistant to GPU/ASIC brute force).
 
 ```
-"SECBAK03" │ mem(4) │ time(4) │ par(1) │ salt(16) │ nonce(24) │ XChaCha20-Poly1305(JSON стора)
-└──────────────── AAD: весь заголовок до nonce ────────────────┘
+"SECBAK03" │ mem(4) │ time(4) │ par(1) │ salt(16) │ nonce(24) │ XChaCha20-Poly1305(store JSON)
+└──────────────── AAD: the whole header up to the nonce ────────────────┘
 ```
 
-Параметры Argon2id (64 МиБ / t=3 / p=4 — выше минимумов OWASP) лежат **в самом
-файле**, поэтому их можно поднимать, не ломая уже сделанные блобы; при чтении
-они проверяются на вменяемые границы, чтобы битый или враждебный заголовок не
-заставил Argon2 съесть всю память. Стойкость блоба = стойкость passphrase:
-для файла в Dropbox/iCloud бери длинную парольную фразу.
+The Argon2id parameters (64 MiB / t=3 / p=4 — above the OWASP minimums) are
+stored **in the file itself**, so they can be raised later without breaking
+existing blobs; on read they are validated against sane bounds so that a
+corrupt or hostile header cannot make Argon2 eat all available memory. Blob
+strength = passphrase strength: for a file in Dropbox/iCloud, use a long
+passphrase.
 
-Отсюда же следует, что mac↔Linux↔Windows синхронизируются без переноса мастер-ключа, а
-старый бэкап после `rekey` по-прежнему открывается своей passphrase.
+It also follows that mac↔Linux↔Windows machines sync without ever moving
+the master key, and an old backup still opens with its passphrase after a
+`rekey`.
 
-### Отпечатки и сравнение
+### Fingerprints and comparison
 
-`fingerprint` — это HMAC-SHA-256 значения **под мастер-ключом**, усечённый до 8
-байт (`fp:…`). Ключевание принципиально: по отпечатку нельзя перебрать
-короткое/словарное значение, не имея мастер-ключа, поэтому `fp:` безопасно
-показывать в чате агента, тикете или скриншоте. Обратная сторона — отпечатки
-сравнимы только между сторами под одним ключом (свои синхронизированные
-машины), но не с чужим стором. Сравнения значений и отпечатков идут в
-константное время (`crypto/subtle`, `hmac.Equal`).
+A `fingerprint` is the HMAC-SHA-256 of a value **under the master key**,
+truncated to 8 bytes (`fp:…`). The keying is the point: a short or
+dictionary value cannot be brute-forced from its fingerprint without the
+master key, which makes `fp:` safe to show in an agent chat, a ticket, or a
+screenshot. The flip side: fingerprints are only comparable between stores
+under the same key (your own synced machines), not against someone else's
+store. Value and fingerprint comparisons run in constant time
+(`crypto/subtle`, `hmac.Equal`).
 
-### Генерация значений
+### Value generation
 
-`sec gen` берёт символы из `crypto/rand` через `rand.Int` (равномерно, без
-modulo bias). Алфавит по умолчанию — 62 символа (A–Z a–z 0–9), с `--symbols` —
-84. При дефолтной длине 32 это ≈190 бит энтропии (≈204 бита с `--symbols`).
-Значение сразу уходит в стор и на экран не печатается — заводить пароль, не
-зная его, это штатный сценарий.
+`sec gen` draws characters from `crypto/rand` via `rand.Int` (uniform, no
+modulo bias). The default alphabet is 62 characters (A–Z a–z 0–9), 84 with
+`--symbols`. At the default length of 32 that is ≈190 bits of entropy
+(≈204 bits with `--symbols`). The value goes straight into the store and is
+never printed — creating a password without knowing it is a first-class
+scenario.
 
-### Что криптографией **не** закрыто
+### What cryptography does **not** cover
 
-- **Журнал обращений** `audit.jsonl` — открытый JSONL рядом со стором: туда
-  пишутся только имена операций и ключей (`proj/KEY`), значений там нет
-  никогда.
-- **`export` / `render`** пишут плейнтекстовый `.env` на диск (0600) — это
-  осознанный выход из шифрованного мира, такой файл не коммитить. Где можно,
-  используй `sec run` (инъекция в env процесса, файла не возникает).
-- **Память процесса** — расшифрованный стор и мастер-ключ живут в куче Go
-  открытым текстом; надёжного затирания (`mlock`/zeroize) нет, так что от
-  дампа памяти или локальной малвари это не защищает.
-- **Мост с Infisical** — шифрование на стороне Infisical, `sec` только
-  переносит значения через их CLI (stdout / временный файл 0600), не через
-  argv.
+- **The access log** `audit.jsonl` is plain JSONL next to the store: it
+  records only operation names and key addresses (`proj/KEY`), never
+  values.
+- **`export` / `render`** write a plaintext `.env` to disk (0600) — a
+  deliberate exit from the encrypted world; do not commit such a file.
+  Where possible, prefer `sec run` (env injection into the process, no
+  file ever exists).
+- **Process memory** — the decrypted store and the master key live in the
+  Go heap in plain text; there is no reliable wiping (`mlock`/zeroize), so
+  this does not protect against a memory dump or local malware.
+- **The Infisical bridge** — encryption happens on Infisical's side; `sec`
+  only ferries values through their CLI (stdout / a temporary 0600 file),
+  never through argv.
 
-## Безопасность
+## Security
 
-Защищает от **случайной утечки** секретов в чаты агентов, историю shell,
-скриншоты и логи. Не защищает от локального root / малвари (как и любой менеджер
-с расшифровкой на той же машине) — это осознанный размен ради удобной
-неинтерактивной работы. Подробнее — раздел «Модель угроз» в
+Protects against **accidental leakage** of secrets into agent chats, shell
+history, screenshots, and logs. Does not protect against local root /
+malware (as with any manager that decrypts on the same machine) — a
+deliberate trade-off in exchange for convenient non-interactive operation.
+More in the "Threat model" section of
 [`cli/README.md`](cli/README.md#модель-угроз).
 
-## Лицензия
+## License
 
 [MIT](LICENSE).
+
+---
+
+🇷🇺 Этот документ по-русски: [README.ru.md](README.ru.md).
