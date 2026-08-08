@@ -159,38 +159,17 @@ func buildReplacements(values map[string][]string, mask bool) []replacement {
 // placeholderFor строит плейсхолдер для значения. По умолчанию раскрывает имя
 // ключа (имена безопасны для чата): [redacted:whois/API_TOKEN]; при mask —
 // глухое [redacted]. Если одно значение принадлежит нескольким ключам, к первому
-// добавляется "+N".
+// добавляется "+N". Адрес — внутренний "service[@profile]/KEY[~prev]", он же
+// CLI-форма, пробелов не содержит.
 func placeholderFor(refs []string, mask bool) string {
 	if mask || len(refs) == 0 {
 		return "[redacted]"
 	}
-	label := compactRef(refs[0])
+	label := refs[0]
 	if len(refs) > 1 {
 		label += fmt.Sprintf("+%d", len(refs)-1)
 	}
 	return "[redacted:" + label + "]"
-}
-
-// compactRef переводит внутренний адрес "service@env/KEY" в компактную форму без
-// пробелов для инлайн-плейсхолдера: "service/KEY" или "service/KEY@env" (в
-// отличие от RefToCLI, которая даёт "service/KEY -e env" для подсказок). Суффикс
-// ~prev (значение из истории) сохраняется.
-func compactRef(internal string) string {
-	suffix := ""
-	if strings.HasSuffix(internal, "~prev") {
-		internal = strings.TrimSuffix(internal, "~prev")
-		suffix = "~prev"
-	}
-	i := strings.LastIndexByte(internal, '/')
-	if i <= 0 || i == len(internal)-1 {
-		return internal + suffix
-	}
-	proj, key := internal[:i], internal[i+1:]
-	svc, env := store.BaseAndEnv(proj)
-	if env == "" {
-		return svc + "/" + key + suffix
-	}
-	return svc + "/" + key + "@" + env + suffix
 }
 
 // report печатает в stderr сводку о вычищенных ключах (имена безопасны). В
@@ -202,7 +181,7 @@ func report(hit map[string]bool) {
 	}
 	refs := make([]string, 0, len(hit))
 	for ref := range hit {
-		refs = append(refs, compactRef(ref))
+		refs = append(refs, ref)
 	}
 	sort.Strings(refs)
 	fmt.Fprintf(os.Stderr, "sec: скрыто ключей: %d (%s)\n", len(hit), strings.Join(refs, ", "))

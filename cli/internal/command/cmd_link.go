@@ -7,8 +7,9 @@ package command
 //	sec extend <proj> --from <родитель>        видеть все ключи родителя read-only
 //
 // Значение по ссылке/наследованию нельзя менять в потомке (см. editBlock):
-// правится в родителе, единый источник правды. Инстанс потомка — -e/.sec,
-// инстанс родителя — --parent-env (по умолчанию тот же).
+// правится в родителе, единый источник правды. Родитель без явного '@'
+// наследует профиль потомка; свой профиль — parent@prod/KEY, базовый набор —
+// parent@/KEY.
 
 import (
 	"github.com/kaidstor/sec/internal/audit"
@@ -21,21 +22,13 @@ import (
 func linkCommand(args []string) int {
 	fs := flag.NewFlagSet("link", flag.ExitOnError)
 	var force bool
-	var parentEnv string
 	fs.BoolVar(&force, "force", false, "заменить существующее собственное значение ссылкой")
-	fs.StringVar(&parentEnv, "parent-env", "", "инстанс родителя (умолч. — как у ключа)")
-	getEnv := addEnvFlag(fs)
 	pos := collectPositionals(fs, args)
 	if len(pos) != 2 {
-		die("нужно два аргумента: sec link <proj>/<KEY> <родитель>/<PKEY> [-e env] [--parent-env penv]")
+		die("нужно два аргумента: sec link <proj>/<KEY> <родитель>[@профиль]/<PKEY>")
 	}
-	env := resolvedEnv(getEnv(), refService(pos[0]))
-	cp, ck := resolveRef(pos[0], env)
-	penv := parentEnv
-	if penv == "" {
-		penv = env
-	}
-	pp, pk := resolveRef(pos[1], penv)
+	cp, ck, profile := resolveRefP(pos[0])
+	pp, pk := resolveRelRef(pos[1], profile)
 	if cp == pp && ck == pk {
 		die("нельзя ссылать ключ сам на себя")
 	}
@@ -47,7 +40,7 @@ func linkCommand(args []string) int {
 		die("%v", err)
 	}
 	if _, _, _, ok := st.Lookup(pp, pk); !ok {
-		die("родитель %s/%s не найден — сперва заведи его: sec set %s", pp, pk, store.RefToCLI(pp+"/"+pk))
+		die("родитель %s/%s не найден — сперва заведи его: sec set %s/%s", pp, pk, st.DisplayProj(pp), pk)
 	}
 	if cur, ok := st.Projects[cp][ck]; ok && cur.Ref == "" && !force {
 		die("%s/%s хранит собственное значение — sec link --force заменит его ссылкой (значение не сохранится)", cp, ck)
@@ -69,9 +62,8 @@ func unlinkCommand(args []string) int {
 	fs := flag.NewFlagSet("unlink", flag.ExitOnError)
 	var drop bool
 	fs.BoolVar(&drop, "drop", false, "удалить ключ вместо материализации значения родителя")
-	getEnv := addEnvFlag(fs)
 	_ = fs.Parse(rest)
-	proj, key := resolveKeyRef(ref, fs, getEnv(), "sec unlink <proj>/<KEY>")
+	proj, key := resolveKeyRef(ref, fs, "sec unlink <proj>/<KEY>")
 
 	unlock := store.Lock()
 	defer unlock()
@@ -110,23 +102,16 @@ func unlinkCommand(args []string) int {
 func extendCommand(args []string) int {
 	service, rest := splitArgs(args)
 	fs := flag.NewFlagSet("extend", flag.ExitOnError)
-	var from, remove, parentEnv string
+	var from, remove string
 	var list bool
-	fs.StringVar(&from, "from", "", "родительская пачка, чьи ключи станут видны read-only")
+	fs.StringVar(&from, "from", "", "родительская пачка (без '@' — профиль как у проекта; свой — parent@prod, базовый — parent@)")
 	fs.StringVar(&remove, "remove", "", "убрать родительскую пачку из наследования")
-	fs.StringVar(&parentEnv, "parent-env", "", "инстанс родителя (умолч. — как у проекта)")
 	fs.BoolVar(&list, "list", false, "показать родителей проекта (по умолчанию, если без --from/--remove)")
-	getEnv := addEnvFlag(fs)
 	_ = fs.Parse(rest)
 	if service == "" {
 		service = fs.Arg(0)
 	}
-	env := resolvedEnv(getEnv(), service)
-	proj := resolveProj(service, env)
-	penv := parentEnv
-	if penv == "" {
-		penv = env
-	}
+	proj, profile := resolveProjP(service)
 
 	// без изменений — показать текущих родителей
 	if from == "" && remove == "" {
@@ -141,7 +126,7 @@ func extendCommand(args []string) int {
 		}
 		fmt.Printf("%s наследует (read-only):\n", proj)
 		for _, p := range parents {
-			fmt.Printf("  %-24s %d ключ(ей)\n", store.RefToCLIProj(p), len(st.Projects[p]))
+			fmt.Printf("  %-24s %d ключ(ей)\n", st.DisplayProj(p), len(st.Projects[p]))
 		}
 		return 0
 	}
@@ -157,7 +142,7 @@ func extendCommand(args []string) int {
 	}
 
 	if remove != "" {
-		parent := resolveProj(remove, penv)
+		parent := resolveRelProj(remove, profile)
 		if !st.RemoveExtend(proj, parent) {
 			die("%s не наследует от %s", proj, parent)
 		}
@@ -169,7 +154,7 @@ func extendCommand(args []string) int {
 		return 0
 	}
 
-	parent := resolveProj(from, penv)
+	parent := resolveRelProj(from, profile)
 	if len(st.Projects[parent]) == 0 && len(st.Extends[parent]) == 0 {
 		die("родительская пачка %q пуста или не существует (sec ls)", parent)
 	}

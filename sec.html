@@ -93,7 +93,7 @@
   <p>Ставится готовым бинарём через Homebrew — Go не нужен:</p>
   <p><code>brew install kaidstor/tap/sec</code> &nbsp;·&nbsp; проверить: <code>sec version</code></p>
   <p>Из исходников (для разработки) — см. README репозитория: <code>cd cli &amp;&amp; just build</code> либо <code>just install</code>.</p>
-  <p>Автодополнение в zsh: <code>eval "$(sec completion zsh)"</code> — дополняет проекты, ключи (<span class="inline">proj/⇥</span>) и инстансы.</p>
+  <p>Автодополнение в zsh: <code>eval "$(sec completion zsh)"</code> — дополняет проекты, ключи (<span class="inline">proj/⇥</span>) и профили (<span class="inline">proj@⇥</span>).</p>
   <p style="margin-bottom:0">Адрес секрета — <span class="inline">&lt;proj&gt;/&lt;KEY&gt;</span>. Если проект опущен, берётся имя текущей папки:
      внутри <span class="inline">~/Projects/rebrandy/whois</span> достаточно <span class="inline">sec run -- just dev</span>.</p>
 </div>
@@ -220,23 +220,23 @@
   </div>
 </div>
 
-<h2>Инстансы / окружения</h2>
+<h2>Профили</h2>
 <div class="two">
   <div class="prose">
     <h3>Один сервис — несколько наборов</h3>
     <p>Разные компании/стенды (<span class="inline">commercial</span>, <span class="inline">max</span>, <span class="inline">prod</span>) — одни ключи, свои значения.
-       Необязательная третья ось: <span class="inline">&lt;proj&gt;</span> — сервис, <span class="inline">-e &lt;инстанс&gt;</span> выбирает набор. Внутри — проект <span class="inline">service@env</span>; сервисы без инстансов не меняются.</p>
-    <div class="cmd"><code>sec set some-bot/BOT_TOKEN -e commercial</code></div>
-    <div class="cmd"><code>sec run some-bot -e max -- just start</code></div>
-    <div class="cmd"><code>sec ls some-bot          ·  sec diff some-bot -e commercial max</code></div>
+       Необязательная третья ось прямо в адресе, как версия в npm: <span class="inline">&lt;proj&gt;@&lt;профиль&gt;</span>. Внутри — проект <span class="inline">service@profile</span>; сервисы без профилей не меняются.</p>
+    <div class="cmd"><code>sec set some-bot@commercial/BOT_TOKEN</code></div>
+    <div class="cmd"><code>sec run some-bot@max -- just start</code></div>
+    <div class="cmd"><code>sec ls some-bot          ·  sec diff some-bot@commercial some-bot@max</code></div>
   </div>
   <div class="prose">
     <h3>Объявление в .sec</h3>
-    <p>Файл в папке сервиса декларирует инстансы и дефолт — читают и CLI (подставляет дефолт без <span class="inline">-e</span>), и агент. <span class="inline">sec check [--all-envs]</span> валидирует ключи инстанса(ов).</p>
-    <div class="cmd"><code>project: some-bot
-envs:    commercial, max
-default: commercial
-keys:    BOT_TOKEN, DB_PASSWORD</code></div>
+    <p>Файл в папке сервиса декларирует профили и дефолт — читают и CLI (подставляет дефолт, когда адрес без <span class="inline">@</span>; базовый набор — <span class="inline">some-bot@</span>), и агент. <span class="inline">sec check [--all-profiles]</span> валидирует ключи профиля(ей).</p>
+    <div class="cmd"><code>project:  some-bot
+profiles: commercial, max
+default:  commercial
+keys:     BOT_TOKEN, DB_PASSWORD</code></div>
   </div>
 </div>
 
@@ -261,7 +261,7 @@ keys:    BOT_TOKEN, DB_PASSWORD</code></div>
 <div class="grid">
   <div class="card">
     <div class="head"><h3>ls / find / mv / cp / rm</h3></div>
-    <div class="cmd"><code>sec ls [proj] [-l|--json] [-e env]</code><div class="d">сервисы → инстансы → ключи (без значений)</div></div>
+    <div class="cmd"><code>sec ls [proj[@профиль]] [-l|--json]</code><div class="d">сервисы → профили → ключи (без значений)</div></div>
     <div class="cmd"><code>sec find token   ·   sec ls --filter git</code><div class="d">поиск по всему стору и фильтр списка: подстрока или glob</div></div>
     <div class="cmd"><code>sec mv whois/OLD whois/NEW</code><div class="d">перенос/переименование без раскрытия</div></div>
     <div class="cmd"><code>sec cp whois/KEY staging/KEY</code><div class="d">копия, оригинал на месте</div></div>
@@ -269,8 +269,8 @@ keys:    BOT_TOKEN, DB_PASSWORD</code></div>
   </div>
   <div class="card">
     <div class="head"><h3>check — манифест .sec</h3></div>
-    <div class="cmd"><code>sec check [proj] [-e env | --all-envs]</code><div class="d">все ли требуемые ключи заведены</div></div>
-    <p class="d" style="margin:0 2px 12px">Файл <span class="inline" style="font-size:12px">.sec</span> — <span class="inline" style="font-size:12px">project/envs/default/keys</span> (или просто список ключей по строке).</p>
+    <div class="cmd"><code>sec check [proj[@профиль] | --all-profiles]</code><div class="d">все ли требуемые ключи заведены</div></div>
+    <p class="d" style="margin:0 2px 12px">Файл <span class="inline" style="font-size:12px">.sec</span> — <span class="inline" style="font-size:12px">project/profiles/default/keys</span> (или просто список ключей по строке).</p>
   </div>
 </div>
 

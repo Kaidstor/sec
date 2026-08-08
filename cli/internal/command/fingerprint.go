@@ -19,43 +19,31 @@ import (
 
 // diffCommand сравнивает два проекта по ключам и отпечаткам — какие ключи
 // совпадают по значению, различаются или есть только в одном. Значения не
-// раскрываются. Удобно свериться «staging == prod» без утечки.
-// Второй аргумент может быть и env-файлом ([user@]host:/путь или локальный
-// путь) — тогда стор сверяется с ним (см. diffAgainstFile).
+// раскрываются. Удобно свериться «staging == prod» без утечки:
+// sec diff bot@commercial bot@max. Второй аргумент может быть и env-файлом
+// ([user@]host:/путь или локальный путь) — тогда стор сверяется с ним
+// (см. diffAgainstFile).
 func diffCommand(args []string) int {
-	// -e может стоять после позиционных аргументов (sec diff svc -e a b), поэтому
-	// собираем позиционные и флаги в любом порядке.
 	fs := flag.NewFlagSet("diff", flag.ExitOnError)
 	var sudo bool
 	var only string
 	fs.BoolVar(&sudo, "sudo", false, "читать файл на хосте под sudo (root-овые прод-конфиги)")
 	fs.StringVar(&only, "only", "", "сверять только перечисленные ключи (через запятую)")
-	getEnv := addEnvFlag(fs)
 	pos := collectPositionals(fs, args)
-	env := getEnv()
 
-	// Файловый режим проверяем первым: иначе `sec diff svc host:/path -e prod`
-	// уехал бы в ветку сравнения двух инстансов. Цена — файл в текущей папке,
-	// названный ровно как инстанс, победит инстанс (та же неоднозначность, что
-	// у sec import).
+	// Файловый режим проверяем первым; цена — файл в текущей папке, названный
+	// ровно как проект, победит проект (та же неоднозначность, что у sec import).
 	if len(pos) == 2 && looksLikeEnvTarget(pos[1]) {
-		return diffAgainstFile(pos[0], pos[1], env, only, sudo)
+		return diffAgainstFile(pos[0], pos[1], only, sudo)
 	}
 	if only != "" || sudo {
 		die("--only/--sudo работают только при сверке с env-файлом: sec diff <proj> <host>:/путь")
 	}
 
-	var pa, pb string
-	switch {
-	case env != "" && len(pos) == 2:
-		// sec diff <service> -e <envA> <envB> — два инстанса одного сервиса
-		pa = resolveProj(pos[0], env)
-		pb = resolveProj(pos[0], pos[1])
-	case len(pos) == 2:
-		pa, pb = pos[0], pos[1]
-	default:
-		die("нужно два проекта: sec diff <projA> <projB>  (или sec diff <service> -e <env1> <env2>)")
+	if len(pos) != 2 {
+		die("нужно два проекта: sec diff <projA> <projB>  (профили — в адресе: sec diff <svc>@<prof1> <svc>@<prof2>)")
 	}
+	pa, pb := resolveProj(pos[0]), resolveProj(pos[1])
 	st, mkey, _, err := store.Open(false)
 	if err != nil {
 		die("%v", err)
@@ -107,13 +95,12 @@ func diffCommand(args []string) int {
 // diffAgainstFile сверяет проект с env-файлом — локальным или на хосте по ssh.
 // Только чтение: ничего не пишет ни в стор, ни в файл. Значения не
 // раскрываются, кроме ключей kind: config (см. envdiff.go).
-func diffAgainstFile(service, target, explicitEnv, only string, sudo bool) int {
+func diffAgainstFile(service, target, only string, sudo bool) int {
 	t, err := parseEnvTarget(target)
 	if err != nil {
 		die("%v", err)
 	}
-	env := resolvedEnv(explicitEnv, service)
-	proj := resolveProj(service, env)
+	proj := resolveProj(service)
 
 	st, mkey, _, err := store.Open(false)
 	if err != nil {
@@ -171,9 +158,8 @@ func verifyCommand(args []string) int {
 	var fromClip, fromStdin bool
 	fs.BoolVar(&fromClip, "clipboard", false, "взять кандидата из буфера обмена")
 	fs.BoolVar(&fromStdin, "stdin", false, "взять кандидата из stdin")
-	getEnv := addEnvFlag(fs)
 	_ = fs.Parse(rest)
-	proj, key := resolveKeyRef(ref, fs, getEnv(), "sec verify <proj>/<KEY>")
+	proj, key := resolveKeyRef(ref, fs, "sec verify <proj>/<KEY>")
 
 	st, _, _, err := store.Open(false)
 	if err != nil {

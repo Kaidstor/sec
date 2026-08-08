@@ -125,8 +125,8 @@ func editBlock(st *store.Store, proj, key string) string {
 			return fmt.Sprintf("%s/%s — ссылка на %s.\n"+
 				"     Значение живёт в родителе, меняй его там:\n"+
 				"       sec set %s\n"+
-				"     Отвязать (сделать собственным): sec unlink %s",
-				proj, key, own.Ref, store.RefToCLI(own.Ref), store.RefToCLI(proj+"/"+key))
+				"     Отвязать (сделать собственным): sec unlink %s/%s",
+				proj, key, own.Ref, st.DisplayRef(own.Ref), st.DisplayProj(proj), key)
 		}
 		return "" // собственное значение — правь свободно
 	}
@@ -134,8 +134,8 @@ func editBlock(st *store.Store, proj, key string) string {
 		return fmt.Sprintf("%s/%s наследуется из пачки-родителя (%s).\n"+
 			"     Меняй в родителе:\n"+
 			"       sec set %s\n"+
-			"     Дать проекту собственное значение: sec set %s --override",
-			proj, key, source, store.RefToCLI(source), store.RefToCLI(proj+"/"+key))
+			"     Дать проекту собственное значение: sec set %s/%s --override",
+			proj, key, source, st.DisplayRef(source), st.DisplayProj(proj), key)
 	}
 	return "" // ключа ещё нет — обычное создание
 }

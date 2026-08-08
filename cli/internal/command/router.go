@@ -18,9 +18,9 @@ import (
 )
 
 var (
-	keyRe  = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
-	projRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
-	envRe  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+	keyRe     = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	projRe    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+	profileRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 )
 
 func die(format string, a ...any) {
@@ -45,77 +45,135 @@ func filepathBase(p string) string {
 	return p
 }
 
-// Адресация проекта с инстансом/окружением — в store.ProjKey / store.BaseAndEnv.
+// Адресация: профиль — часть адреса ("service@profile/KEY", как npm pkg@ver
+// или ssh user@host), внутренний ключ стора совпадает с CLI-формой
+// (store.ProjKey / store.BaseAndProfile).
 
-func checkEnv(env string) {
-	if env != "" && !envRe.MatchString(env) {
-		die("некорректное имя окружения %q (a-z, 0-9, точка, дефис, подчёркивание)", env)
+func checkProfile(profile string) {
+	if profile != "" && !profileRe.MatchString(profile) {
+		die("некорректное имя профиля %q (a-z, 0-9, точка, дефис, подчёркивание)", profile)
 	}
 }
 
-// resolveRef разбирает "<service>/<KEY>" либо просто "<KEY>" (тогда сервис —
-// имя текущей директории) и склеивает с инстансом env во внутренний ключ проекта.
-func resolveRef(ref, env string) (string, string) {
+// splitProfile разбирает CLI-имя проекта "service[@profile]". explicit=true
+// при любом '@': "svc@prod" — явный профиль, "svc@" — явно базовый набор
+// (в обход default из .sec).
+func splitProfile(name string) (base, profile string, explicit bool) {
+	if b, p, ok := strings.Cut(name, "@"); ok {
+		return b, p, true
+	}
+	return name, "", false
+}
+
+// resolveProjP разбирает CLI-имя проекта "service[@profile]" (пустое — имя
+// текущей папки) во внутренний ключ. Без явного '@' подставляется default из
+// .sec. Второй результат — применённый профиль.
+func resolveProjP(service string) (string, string) {
+	base, profile, explicit := splitProfile(service)
+	if base == "" {
+		if explicit {
+			die("некорректный адрес %q — профиль пишется после проекта: <proj>@%s", service, profile)
+		}
+		base = cwdProject()
+	}
+	if !projRe.MatchString(base) {
+		die("некорректное имя проекта %q (a-z, 0-9, точка, дефис, подчёркивание)", base)
+	}
+	if !explicit {
+		profile = secDefaultProfile(base)
+	}
+	checkProfile(profile)
+	return store.ProjKey(base, profile), profile
+}
+
+// resolveProj — resolveProjP без второго результата, для команд, работающих
+// над проектом целиком (run/export/import/push/rm).
+func resolveProj(service string) string {
+	proj, _ := resolveProjP(service)
+	return proj
+}
+
+// resolveRef разбирает "<service[@profile]>/<KEY>" либо просто "<KEY>" (тогда
+// сервис — имя текущей директории) во внутренний адрес проект+ключ.
+func resolveRef(ref string) (string, string) {
+	proj, key, _ := resolveRefP(ref)
+	return proj, key
+}
+
+// resolveRefP — как resolveRef, плюс применённый профиль (для команд, где
+// второй адрес наследует профиль первого: mv/cp/link).
+func resolveRefP(ref string) (string, string, string) {
 	service, key, ok := strings.Cut(ref, "/")
 	if !ok {
-		service, key = cwdProject(), ref
+		service, key = "", ref
 	}
-	if !projRe.MatchString(service) {
-		die("некорректное имя проекта %q (a-z, 0-9, точка, дефис, подчёркивание)", service)
-	}
-	checkEnv(env)
+	proj, profile := resolveProjP(service)
 	if !keyRe.MatchString(key) {
 		die("некорректное имя ключа %q (должно годиться как env-переменная: A-Z, 0-9, _)", key)
 	}
-	return store.ProjKey(service, env), key
+	return proj, key, profile
 }
 
-// resolveProj склеивает имя сервиса (из аргумента или cwd) с инстансом env —
-// для команд, работающих над проектом целиком (run/export/import/push/ls/rm).
-func resolveProj(service, env string) string {
-	if service == "" {
-		service = cwdProject()
+// resolveRelProj — разбор второго адреса команды (назначение mv/cp, родитель
+// link/extend): без явного '@' наследуется профиль prof первого адреса,
+// "svc@" — явно базовый набор.
+func resolveRelProj(service, prof string) string {
+	base, profile, explicit := splitProfile(service)
+	if !explicit {
+		profile = prof
 	}
-	if !projRe.MatchString(service) {
-		die("некорректное имя проекта %q", service)
+	if base == "" {
+		base = cwdProject()
 	}
-	checkEnv(env)
-	return store.ProjKey(service, env)
+	if !projRe.MatchString(base) {
+		die("некорректное имя проекта %q", base)
+	}
+	checkProfile(profile)
+	return store.ProjKey(base, profile)
+}
+
+// resolveRelRef — resolveRelProj для полного адреса "<service[@profile]>/<KEY>".
+func resolveRelRef(ref, prof string) (string, string) {
+	service, key, ok := strings.Cut(ref, "/")
+	if !ok {
+		service, key = "", ref
+	}
+	proj := resolveRelProj(service, prof)
+	if !keyRe.MatchString(key) {
+		die("некорректное имя ключа %q (должно годиться как env-переменная: A-Z, 0-9, _)", key)
+	}
+	return proj, key
 }
 
 // resolveKeyRef — общий хвост команд над одним ключом (set/gen/get/history/
 // undo/redo/forget/meta/otp/verify): берёт ref (первый позиционный или
-// fs.Arg(0)), применяет инстанс (-e/.sec) и возвращает внутренний проект+ключ.
-// При отсутствии ref печатает usage и выходит.
-func resolveKeyRef(ref string, fs *flag.FlagSet, explicitEnv, usage string) (string, string) {
+// fs.Arg(0)) и возвращает внутренний проект+ключ. При отсутствии ref печатает
+// usage и выходит.
+func resolveKeyRef(ref string, fs *flag.FlagSet, usage string) (string, string) {
 	if ref == "" {
 		ref = fs.Arg(0)
 	}
 	if ref == "" {
 		die("укажи ключ: %s", usage)
 	}
-	return resolveRef(ref, resolvedEnv(explicitEnv, refService(ref)))
+	return resolveRef(ref)
 }
 
 // resolveServiceProj — общий хвост команд над проектом целиком (run/export/
-// import/push): сервис из аргумента, иначе fs.Arg(0), иначе имя папки; плюс
-// инстанс (-e/.sec). Возвращает внутренний проект и разрешённый инстанс.
-func resolveServiceProj(service string, fs *flag.FlagSet, explicitEnv string) (string, string) {
+// import/push): сервис из аргумента, иначе fs.Arg(0), иначе имя папки.
+// Возвращает внутренний проект и применённый профиль.
+func resolveServiceProj(service string, fs *flag.FlagSet) (string, string) {
 	if service == "" {
 		service = fs.Arg(0)
 	}
-	if service == "" {
-		service = cwdProject()
-	}
-	env := resolvedEnv(explicitEnv, service)
-	return resolveProj(service, env), env
+	return resolveProjP(service)
 }
 
-// collectPositionals разбирает args, где позиционные аргументы и флаги
-// (включая -e/--env) идут вперемешку: по очереди снимает ведущие позиционные и
-// скармливает остаток флагсету, пока не кончится. Нужно там, где позиционных
-// несколько — стандартный flag останавливается на первом же (mv/cp/diff) — и
-// там, где флаг стоит после позиционного (`sec deploy --sudo proj --to …`).
+// collectPositionals разбирает args, где позиционные аргументы и флаги идут
+// вперемешку: по очереди снимает ведущие позиционные и скармливает остаток
+// флагсету, пока не кончится. Нужно там, где позиционных несколько —
+// стандартный flag останавливается на первом же (mv/cp/diff) — и там, где
+// флаг стоит после позиционного (`sec deploy --sudo proj --to …`).
 func collectPositionals(fs *flag.FlagSet, args []string) []string {
 	var pos []string
 	for {
@@ -170,10 +228,8 @@ func selectKeys(keys map[string]store.Secret, only, projLabel string, includeFil
 		}
 		if len(binSkipped) > 0 {
 			sort.Strings(binSkipped)
-			// projLabel — внутренний "service@env": в подсказку идёт CLI-форма
-			// "service/<KEY> -e env", иначе команду нельзя скопировать и выполнить
-			fmt.Fprintf(os.Stderr, "sec: бинарные (файловые) ключи пропущены: %s (доставать: sec get %s --out <файл>)\n",
-				strings.Join(binSkipped, ", "), store.RefToCLI(projLabel+"/<KEY>"))
+			fmt.Fprintf(os.Stderr, "sec: бинарные (файловые) ключи пропущены: %s (доставать: sec get %s/<KEY> --out <файл>)\n",
+				strings.Join(binSkipped, ", "), projLabel)
 		}
 		if len(fileSkipped) > 0 {
 			sort.Strings(fileSkipped)
@@ -187,8 +243,8 @@ func selectKeys(keys map[string]store.Secret, only, projLabel string, includeFil
 		k = strings.TrimSpace(k)
 		if s, ok := keys[k]; ok {
 			if s.IsBinary() {
-				die("%s/%s — бинарный (файловый) секрет, в env/Infisical не отдаётся: sec get %s --out <файл>",
-					projLabel, k, store.RefToCLI(projLabel+"/"+k))
+				die("%s/%s — бинарный (файловый) секрет, в env/Infisical не отдаётся: sec get %s/%s --out <файл>",
+					projLabel, k, projLabel, k)
 			}
 			out[k] = s.Value
 		} else {
@@ -199,19 +255,6 @@ func selectKeys(keys map[string]store.Secret, only, projLabel string, includeFil
 		die("в проекте %s нет ключей: %s", projLabel, strings.Join(missing, ", "))
 	}
 	return out
-}
-
-// addEnvFlag регистрирует -e/--env на флагсете и возвращает резолвер значения
-// (длинная форма приоритетнее, если заданы обе).
-func addEnvFlag(fs *flag.FlagSet) func() string {
-	short := fs.String("e", "", "инстанс/окружение (напр. commercial); умолч. — из .sec или без инстанса")
-	long := fs.String("env", "", "то же, что -e (длинная форма)")
-	return func() string {
-		if *long != "" {
-			return *long
-		}
-		return *short
-	}
 }
 
 // defaultBareFlag подставляет def после голого -name/--name (без значения в
@@ -309,26 +352,28 @@ Windows Credential Manager (fallback: env SEC_KEY / файл).
 
 Если <proj> не указан (просто KEY или совсем пусто) — берётся имя текущей папки.
 
-Инстансы/окружения (-e/--env): у одного сервиса может быть несколько наборов
-значений — например разные компании/стенды. Флаг -e работает почти во всех
-командах над значениями (set/gen/get/run/export/import/push/ls/rm/mv/cp/meta/…):
-  sec set some-bot/TOKEN -e commercial     # значение инстанса commercial
-  sec run some-bot -e max -- just start    # запустить инстанс max
-  sec ls some-bot                          # покажет инстансы
-  sec diff some-bot -e commercial max      # сравнить два инстанса
-Инстансы можно объявить в .sec (project/envs/default/keys); дефолт из .sec
-подставляется, когда -e не указан. Сервисы без инстансов работают как раньше.
-У import/push -e задаёт инстанс в sec, а окружение Infisical — отдельный
-флаг --infisical-env.
+Профили: у одного сервиса может быть несколько наборов значений — например
+разные компании/стенды. Профиль — часть адреса: <proj>@<profile> (как
+pkg@version в npm) — и работает во всех командах над значениями:
+  sec set some-bot@commercial/TOKEN        # значение профиля commercial
+  sec run some-bot@max -- just start       # запустить профиль max
+  sec ls some-bot                          # покажет профили
+  sec diff some-bot@commercial some-bot@max  # сравнить два профиля
+Профили можно объявить в .sec (project/profiles/default/keys); дефолт из .sec
+подставляется, когда адрес без '@'; явная форма "some-bot@" — базовый набор
+в обход дефолта. Сервисы без профилей работают как раньше.
+У import/push профиль адреса задаёт профиль в sec, а окружение Infisical —
+отдельный флаг --infisical-env.
 
-Ссылки и наследование (общие значения между пачками/инстансами):
+Ссылки и наследование (общие значения между пачками/профилями):
   sec link app/DB_URL shared/DATABASE_URL   app/DB_URL = живое значение родителя
   sec extend app --from base                app видит все ключи base read-only
 Ссылка резолвится в текущее значение родителя при чтении (get/run/export/…),
 поэтому источник правды один. Редактировать значение в потомке нельзя — sec
 подскажет, где родитель; sec unlink делает значение собственным, sec set
---override даёт проекту свой ключ поверх унаследованного. Инстанс родителя —
---parent-env (умолч. как у потомка).
+--override даёт проекту свой ключ поверх унаследованного. Родитель без '@'
+берёт профиль потомка; свой профиль родителя — shared@prod/KEY, базовый
+набор — shared@/KEY.
 
 Флаги set:
   --clipboard   взять значение из буфера обмена

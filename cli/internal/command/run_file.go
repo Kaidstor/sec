@@ -31,9 +31,10 @@ type fileMount struct {
 	dest      string // явный путь; "" — временный каталог
 }
 
-// parseFileMount разбирает "[ENV=]<KEY|proj/KEY>[:путь]". Голый KEY — из
-// проекта запуска (с его инстансом); "proj/KEY" — из базового проекта без
-// инстанса (файловые секреты обычно живут в отдельной пачке вроде tauri-keys).
+// parseFileMount разбирает "[ENV=]<KEY|proj[@prof]/KEY>[:путь]". Голый KEY —
+// из проекта запуска (с его профилем); "proj/KEY" — из базового проекта без
+// профиля (файловые секреты обычно живут в отдельной пачке вроде tauri-keys),
+// профиль чужой пачки — явно: proj@prof/KEY.
 func parseFileMount(spec, runProj string) (fileMount, error) {
 	m := fileMount{}
 	rest := spec
@@ -50,10 +51,11 @@ func parseFileMount(spec, runProj string) (fileMount, error) {
 		}
 	}
 	if p, k, ok := strings.Cut(rest, "/"); ok {
-		if !projRe.MatchString(p) || !keyRe.MatchString(k) {
-			return m, fmt.Errorf("--file %s: некорректная ссылка %q (нужно KEY или proj/KEY)", spec, rest)
+		base, prof, _ := splitProfile(p)
+		if !projRe.MatchString(base) || !keyRe.MatchString(k) || (prof != "" && !profileRe.MatchString(prof)) {
+			return m, fmt.Errorf("--file %s: некорректная ссылка %q (нужно KEY или proj[@prof]/KEY)", spec, rest)
 		}
-		m.proj, m.key = store.ProjKey(p, ""), k
+		m.proj, m.key = store.ProjKey(base, prof), k
 	} else {
 		if !keyRe.MatchString(rest) {
 			return m, fmt.Errorf("--file %s: некорректное имя ключа %q", spec, rest)

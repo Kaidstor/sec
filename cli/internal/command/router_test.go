@@ -38,6 +38,28 @@ func names(m map[string]string) []string {
 	return out
 }
 
+// splitProfile — разбор "service[@profile]": explicit различает "svc" (дефолт
+// из .sec применим) и "svc@" (явно базовый набор).
+func TestSplitProfile(t *testing.T) {
+	cases := []struct {
+		in, base, profile string
+		explicit          bool
+	}{
+		{"svc", "svc", "", false},
+		{"svc@prod", "svc", "prod", true},
+		{"svc@", "svc", "", true},
+		{"", "", "", false},
+		{"@prod", "", "prod", true}, // база пустая — resolveProjP такое отвергает
+	}
+	for _, c := range cases {
+		b, p, ex := splitProfile(c.in)
+		if b != c.base || p != c.profile || ex != c.explicit {
+			t.Errorf("splitProfile(%q) = %q, %q, %v; ожидалось %q, %q, %v",
+				c.in, b, p, ex, c.base, c.profile, c.explicit)
+		}
+	}
+}
+
 func TestDefaultBareFlag(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"--out", "--out ."},
@@ -45,7 +67,7 @@ func TestDefaultBareFlag(t *testing.T) {
 		{"--out --peek", "--out . --peek"},
 		{"--out path", "--out path"},
 		{"--out=path", "--out=path"},
-		{"-e prod --out", "-e prod --out ."},
+		{"-n 5 --out", "-n 5 --out ."},
 		{"", ""},
 	}
 	for _, c := range cases {

@@ -22,7 +22,6 @@ func TestUsedFlagsWhitelistsKnownOnly(t *testing.T) {
 		{"set", []string{"proj/KEY", "--note", "-черновик, потом перепишу"}, "--note"}, // значение флага не попадает
 		{"run", []string{"proj", "--", "just", "dev", "--watch"}, ""},                  // флаги чужой команды не наши
 		{"get", []string{"--несуществующий", "--peek"}, "--peek"},                      // опечатки отбрасываются
-		{"get", []string{"-e", "prod"}, "-e"},                                          // короткая форма живёт отдельно от --env
 		{"version", []string{"--json"}, ""},                                            // у команды нет флагов — нечего писать
 	}
 	for _, c := range cases {

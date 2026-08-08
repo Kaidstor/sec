@@ -104,7 +104,7 @@ export function useProjectPicker(projects: string[], opts: { isLoading?: boolean
         return undefined;
       }
       if (!PROJ_RE.test(name)) {
-        setError("a-z, 0-9, точка, дефис, подчёркивание; инстанс через @env");
+        setError("a-z, 0-9, точка, дефис, подчёркивание; профиль через @имя");
         return undefined;
       }
       return name;

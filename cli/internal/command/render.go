@@ -20,13 +20,19 @@ import (
 // ---------------------------------------------------------------------------
 
 // lookupRef — как resolveRef, но возвращает ошибку вместо die (для шаблонов).
-// env (инстанс) применяется и к коротким "KEY", и к полным "service/KEY".
-func lookupRef(st *store.Store, defService, env, ref string) (string, error) {
+// Профиль рендера (из --proj/.sec) применяется и к коротким "KEY", и к полным
+// "service/KEY" без явного '@'; свой профиль в шаблоне — "service@prod/KEY",
+// базовый набор — "service@/KEY".
+func lookupRef(st *store.Store, defService, profile, ref string) (string, error) {
 	service, key, ok := strings.Cut(ref, "/")
 	if !ok {
 		service, key = defService, ref
 	}
-	proj := store.ProjKey(service, env)
+	base, prof, explicit := splitProfile(service)
+	if !explicit {
+		prof = profile
+	}
+	proj := store.ProjKey(base, prof)
 	sec, _, _, found := st.Lookup(proj, key) // ссылки/наследование разрешаем как везде
 	if !found {
 		return "", fmt.Errorf("нет секрета %s/%s", proj, key)
@@ -42,8 +48,7 @@ func renderCommand(args []string) int {
 	fs := flag.NewFlagSet("render", flag.ExitOnError)
 	var file, proj string
 	fs.StringVar(&file, "file", "", "куда записать результат (обязателен)")
-	fs.StringVar(&proj, "proj", "", "проект для коротких ссылок (умолч. — текущая папка)")
-	getEnv := addEnvFlag(fs)
+	fs.StringVar(&proj, "proj", "", "проект для коротких ссылок, можно с @профилем (умолч. — текущая папка)")
 	_ = fs.Parse(rest)
 	if tpl == "" {
 		tpl = fs.Arg(0)
@@ -54,11 +59,8 @@ func renderCommand(args []string) int {
 	if file == "" {
 		die("render пишет только в файл (защита от утечки в вывод): --file <out>")
 	}
-	if proj == "" {
-		proj = cwdProject()
-	}
-	env := resolvedEnv(getEnv(), proj)
-	checkEnv(env)
+	projKey, profile := resolveProjP(proj)
+	service, _ := store.BaseAndProfile(projKey)
 
 	data, err := os.ReadFile(tpl)
 	if err != nil {
@@ -69,7 +71,7 @@ func renderCommand(args []string) int {
 		die("%v", err)
 	}
 	t, err := template.New(tpl).Funcs(template.FuncMap{
-		"secret": func(ref string) (string, error) { return lookupRef(st, proj, env, ref) },
+		"secret": func(ref string) (string, error) { return lookupRef(st, service, profile, ref) },
 	}).Parse(string(data))
 	if err != nil {
 		die("шаблон %s: %v", tpl, err)
@@ -81,7 +83,7 @@ func renderCommand(args []string) int {
 	if err := writeSecretFile(file, buf.Bytes()); err != nil {
 		die("запись %s: %v", file, err)
 	}
-	audit.Record("render", proj, tpl+" → "+file)
+	audit.Record("render", projKey, tpl+" → "+file)
 	fmt.Printf("записан %s (0600) из шаблона %s\n", file, tpl)
 	return 0
 }

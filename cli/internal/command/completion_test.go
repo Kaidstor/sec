@@ -73,11 +73,15 @@ func TestCompleteRef(t *testing.T) {
 	}
 }
 
-func TestCompleteEnvAndFlags(t *testing.T) {
+func TestCompleteProfilesAndFlags(t *testing.T) {
 	st := completionTestStore()
-	// значение -e → инстансы
-	if got := completeCandidates(st, []string{"get", "some-bot/BOT_TOKEN", "-e", ""}); !hasCand(got, "commercial") || !hasCand(got, "max") {
-		t.Errorf("инстансы не предложены после -e: %v", got)
+	// проекты с профилем предлагаются @-формой
+	if got := completeCandidates(st, []string{"get", "some-bot@"}); !hasCand(got, "some-bot@commercial/") || !hasCand(got, "some-bot@max/") {
+		t.Errorf("@-формы профилей не предложены: %v", got)
+	}
+	// ключи конкретного профиля после @-адреса
+	if got := completeCandidates(st, []string{"get", "some-bot@commercial/"}); !hasCand(got, "some-bot@commercial/BOT_TOKEN") {
+		t.Errorf("ключи профиля не предложены: %v", got)
 	}
 	// флаги команды
 	if got := completeCandidates(st, []string{"get", "whois/API_TOKEN", "--"}); !hasCand(got, "--clip") || !hasCand(got, "--fingerprint") {

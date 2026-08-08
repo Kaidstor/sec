@@ -2,7 +2,7 @@ import { Action, ActionPanel, Form, Icon, LaunchProps, Toast, popToRoot, showHUD
 import { useCachedPromise } from "@raycast/utils";
 import { useState } from "react";
 import { ProjectField, rememberProject, useProjectPicker } from "./project-field";
-import { KEY_RE, listSecrets, runSec, splitProject } from "./sec";
+import { KEY_RE, listSecrets, runSec } from "./sec";
 
 interface FormValues {
   project: string;
@@ -46,12 +46,10 @@ export default function GenerateSecret(props: Props) {
       return;
     }
 
-    const { service, env } = splitProject(project);
-    const args = ["gen", `${service}/${key}`, "--len", String(len)];
+    const args = ["gen", `${project}/${key}`, "--len", String(len)];
     if (values.symbols) args.push("--symbols");
     if (values.copy) args.push("--clip");
     if (values.note.trim()) args.push("--note", values.note.trim());
-    if (env) args.push("-e", env);
 
     try {
       await runSec(args);

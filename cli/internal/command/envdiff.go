@@ -168,13 +168,13 @@ func envKeysOf(st *store.Store, proj, only string) map[string]store.Secret {
 			} else if s.IsFile() {
 				// явно названный файловый ключ — точная ошибка здесь, иначе он
 				// молча выпадет ниже и команда упадёт «не осталось ключей»
-				die("%s/%s — файловый (kind: file) секрет, в env-файл он не пишется: sec get %s --out <файл>",
-					store.RefToCLIProj(proj), k, store.RefToCLI(proj+"/"+k))
+				die("%s/%s — файловый (kind: file) секрет, в env-файл он не пишется: sec get %s/%s --out <файл>",
+					proj, k, st.DisplayProj(proj), k)
 			}
 			want[k] = true
 		}
 		if len(missing) > 0 {
-			die("в проекте %s нет ключей: %s", store.RefToCLIProj(proj), strings.Join(missing, ", "))
+			die("в проекте %s нет ключей: %s", proj, strings.Join(missing, ", "))
 		}
 		for k := range keys {
 			if !want[k] {
@@ -191,11 +191,11 @@ func envKeysOf(st *store.Store, proj, only string) map[string]store.Secret {
 	}
 	if len(skipped) > 0 {
 		sort.Strings(skipped)
-		fmt.Fprintf(os.Stderr, "sec: файловые (kind: file) ключи в env-файле не участвуют: %s (доставать: sec get %s --out <файл>)\n",
-			strings.Join(skipped, ", "), store.RefToCLI(proj+"/<KEY>"))
+		fmt.Fprintf(os.Stderr, "sec: файловые (kind: file) ключи в env-файле не участвуют: %s (доставать: sec get %s/<KEY> --out <файл>)\n",
+			strings.Join(skipped, ", "), st.DisplayProj(proj))
 	}
 	if len(keys) == 0 {
-		die("в %s не осталось ключей для env-файла", store.RefToCLIProj(proj))
+		die("в %s не осталось ключей для env-файла", proj)
 	}
 	return keys
 }

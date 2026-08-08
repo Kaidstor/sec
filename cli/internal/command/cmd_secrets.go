@@ -38,9 +38,8 @@ func setCommand(args []string) int {
 	fs.BoolVar(&override, "override", false, "перебить ссылку/наследование собственным значением")
 	fs.StringVar(&note, "note", "", "описание/назначение ключа (метаданные, без секрета)")
 	fs.StringVar(&kind, "kind", "", "тип: password|apikey|totp|file|config|env|...")
-	getEnv := addEnvFlag(fs)
 	_ = fs.Parse(rest)
-	proj, key := resolveKeyRef(ref, fs, getEnv(), "sec set <proj>/<KEY> (или просто <KEY> внутри папки проекта)")
+	proj, key := resolveKeyRef(ref, fs, "sec set <proj>/<KEY> (или просто <KEY> внутри папки проекта)")
 
 	// ссылку/наследование не редактируем — предупреждаем до ввода, чтобы не тратить набор впустую
 	if st0, _, _, err := store.Open(false); err == nil {
@@ -239,9 +238,8 @@ func genCommand(args []string) int {
 	fs.BoolVar(&override, "override", false, "перебить ссылку/наследование собственным значением")
 	fs.StringVar(&note, "note", "", "описание/назначение ключа (метаданные, без секрета)")
 	fs.StringVar(&kind, "kind", "", "тип: password|apikey|totp|config|env|...")
-	getEnv := addEnvFlag(fs)
 	_ = fs.Parse(rest)
-	proj, key := resolveKeyRef(ref, fs, getEnv(), "sec gen <proj>/<KEY> [--len 32]")
+	proj, key := resolveKeyRef(ref, fs, "sec gen <proj>/<KEY> [--len 32]")
 	if length < 8 || length > 1024 {
 		die("--len: от 8 до 1024")
 	}
@@ -307,12 +305,11 @@ func getCommand(args []string) int {
 	fs.StringVar(&clearAfter, "clear-after", "", "с --clip: очистить буфер через интервал (напр. 20s), если не перезаписан")
 	fs.StringVar(&outFile, "out", "", "записать значение в файл 0600 (единственный способ достать бинарные); без пути — в текущую папку под исходным именем")
 	fs.IntVar(&prevN, "prev", 0, "показать N-е предыдущее значение (1 = прошлое)")
-	getEnv := addEnvFlag(fs)
 	// голый --out (без пути) — «сюда, под исходным именем»: стандартный flag
 	// опциональных значений не умеет, подставляем "." сами
 	rest = defaultBareFlag(rest, "out", ".")
 	_ = fs.Parse(rest)
-	proj, key := resolveKeyRef(ref, fs, getEnv(), "sec get <proj>/<KEY>")
+	proj, key := resolveKeyRef(ref, fs, "sec get <proj>/<KEY>")
 
 	st, mkey, _, err := store.Open(false)
 	if err != nil {
@@ -475,9 +472,8 @@ func historyCommand(args []string) int {
 	fs := flag.NewFlagSet("history", flag.ExitOnError)
 	var asJSON bool
 	fs.BoolVar(&asJSON, "json", false, "машинный вывод с отпечатками (без значений)")
-	getEnv := addEnvFlag(fs)
 	_ = fs.Parse(rest)
-	proj, key := resolveKeyRef(ref, fs, getEnv(), "sec history <proj>/<KEY>")
+	proj, key := resolveKeyRef(ref, fs, "sec history <proj>/<KEY>")
 	st, mkey, _, err := store.Open(false)
 	if err != nil {
 		die("%v", err)
@@ -529,9 +525,8 @@ func historyCommand(args []string) int {
 func undoCommand(args []string) int {
 	ref, rest := splitArgs(args)
 	fs := flag.NewFlagSet("undo", flag.ExitOnError)
-	getEnv := addEnvFlag(fs)
 	_ = fs.Parse(rest)
-	proj, key := resolveKeyRef(ref, fs, getEnv(), "sec undo <proj>/<KEY>")
+	proj, key := resolveKeyRef(ref, fs, "sec undo <proj>/<KEY>")
 	unlock := store.Lock()
 	defer unlock()
 	st, mkey, _, err := store.Open(false)
@@ -557,9 +552,8 @@ func undoCommand(args []string) int {
 func redoCommand(args []string) int {
 	ref, rest := splitArgs(args)
 	fs := flag.NewFlagSet("redo", flag.ExitOnError)
-	getEnv := addEnvFlag(fs)
 	_ = fs.Parse(rest)
-	proj, key := resolveKeyRef(ref, fs, getEnv(), "sec redo <proj>/<KEY>")
+	proj, key := resolveKeyRef(ref, fs, "sec redo <proj>/<KEY>")
 	unlock := store.Lock()
 	defer unlock()
 	st, mkey, _, err := store.Open(false)
@@ -587,9 +581,8 @@ func redoCommand(args []string) int {
 func forgetCommand(args []string) int {
 	ref, rest := splitArgs(args)
 	fs := flag.NewFlagSet("forget", flag.ExitOnError)
-	getEnv := addEnvFlag(fs)
 	_ = fs.Parse(rest)
-	proj, key := resolveKeyRef(ref, fs, getEnv(), "sec forget <proj>/<KEY>")
+	proj, key := resolveKeyRef(ref, fs, "sec forget <proj>/<KEY>")
 	unlock := store.Lock()
 	defer unlock()
 	st, mkey, _, err := store.Open(false)
@@ -620,8 +613,8 @@ func cpCommand(args []string) int { return moveKey(args, false) }
 // moveKey переносит (remove=true) или копирует (remove=false) ключ без
 // раскрытия значения — вместе едут история, redo и метаданные. Назначение без
 // "/" — имя проекта, имя ключа сохраняется (переименование внутри проекта:
-// sec mv demo/OLD demo/NEW). Инстанс (-e/.sec) берётся по источнику и
-// применяется к обоим концам.
+// sec mv demo/OLD demo/NEW). Назначение без явного '@' наследует профиль
+// источника; свой профиль — proj2@prof, базовый набор — proj2@.
 func moveKey(args []string, remove bool) int {
 	name := "cp"
 	if remove {
@@ -630,21 +623,16 @@ func moveKey(args []string, remove bool) int {
 	fs := flag.NewFlagSet(name, flag.ExitOnError)
 	var force bool
 	fs.BoolVar(&force, "force", false, "перезаписать существующий ключ назначения")
-	getEnv := addEnvFlag(fs)
 	pos := collectPositionals(fs, args)
 	if len(pos) != 2 {
 		die("нужно два аргумента: sec %s <proj>/<KEY> <proj2>[/<KEY2>]", name)
 	}
-	env := resolvedEnv(getEnv(), refService(pos[0]))
-	sp, sk := resolveRef(pos[0], env)
+	sp, sk, profile := resolveRefP(pos[0])
 	var dp, dk string
 	if strings.Contains(pos[1], "/") {
-		dp, dk = resolveRef(pos[1], env)
+		dp, dk = resolveRelRef(pos[1], profile)
 	} else {
-		if !projRe.MatchString(pos[1]) {
-			die("некорректное имя проекта %q", pos[1])
-		}
-		dp, dk = store.ProjKey(pos[1], env), sk
+		dp, dk = resolveRelProj(pos[1], profile), sk
 	}
 	if sp == dp && sk == dk {
 		die("источник и назначение совпадают")
@@ -680,7 +668,6 @@ func rmCommand(args []string) int {
 	fs := flag.NewFlagSet("rm", flag.ExitOnError)
 	var all bool
 	fs.BoolVar(&all, "all", false, "удалить проект целиком")
-	getEnv := addEnvFlag(fs)
 	_ = fs.Parse(rest)
 	if ref == "" {
 		ref = fs.Arg(0)
@@ -699,7 +686,7 @@ func rmCommand(args []string) int {
 		if strings.Contains(ref, "/") {
 			die("--all принимает имя проекта, а не ключ: sec rm %s --all", strings.Split(ref, "/")[0])
 		}
-		sp := resolveProj(ref, resolvedEnv(getEnv(), ref))
+		sp := resolveProj(ref)
 		n := len(st.Projects[sp])
 		if n == 0 {
 			die("проекта %q нет", sp)
@@ -708,7 +695,7 @@ func rmCommand(args []string) int {
 			fmt.Fprintf(os.Stderr, "sec: ВНИМАНИЕ: на ключи %s ссылаются %s — после удаления ссылки станут битыми\n", sp, strings.Join(refs, ", "))
 		}
 		if ext := st.Extenders(sp); len(ext) > 0 {
-			fmt.Fprintf(os.Stderr, "sec: ВНИМАНИЕ: от %s наследуют %s — потеряют унаследованные ключи (отвязать: sec extend <proj> --remove %s)\n", sp, strings.Join(ext, ", "), store.RefToCLIProj(sp))
+			fmt.Fprintf(os.Stderr, "sec: ВНИМАНИЕ: от %s наследуют %s — потеряют унаследованные ключи (отвязать: sec extend <proj> --remove %s)\n", sp, strings.Join(ext, ", "), st.DisplayProj(sp))
 		}
 		delete(st.Projects, sp)
 		delete(st.Extends, sp) // осиротевшие исходящие связи удаляемого проекта
@@ -719,7 +706,7 @@ func rmCommand(args []string) int {
 		fmt.Printf("удалён проект %s (%d ключей)\n", sp, n)
 		return 0
 	}
-	proj, key := resolveKeyRef(ref, fs, getEnv(), "sec rm <proj>/<KEY>")
+	proj, key := resolveKeyRef(ref, fs, "sec rm <proj>/<KEY>")
 	mustSecret(st, proj, key)
 	if refs := st.Referrers(proj + "/" + key); len(refs) > 0 {
 		fmt.Fprintf(os.Stderr, "sec: ВНИМАНИЕ: на %s/%s ссылаются %s — после удаления ссылки станут битыми (перецелить: sec link …; отвязать: sec unlink …)\n", proj, key, strings.Join(refs, ", "))
@@ -742,9 +729,8 @@ func otpCommand(args []string) int {
 	fs := flag.NewFlagSet("otp", flag.ExitOnError)
 	var clip bool
 	fs.BoolVar(&clip, "clip", false, "скопировать код в буфер, не печатать")
-	getEnv := addEnvFlag(fs)
 	_ = fs.Parse(rest)
-	proj, key := resolveKeyRef(ref, fs, getEnv(), "sec otp <proj>/<KEY>")
+	proj, key := resolveKeyRef(ref, fs, "sec otp <proj>/<KEY>")
 	st, _, _, err := store.Open(false)
 	if err != nil {
 		die("%v", err)

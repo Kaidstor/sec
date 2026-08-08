@@ -76,13 +76,13 @@ func TestDueAt(t *testing.T) {
 }
 
 func TestParseSecFile(t *testing.T) {
-	text := "# .sec\nproject: some-bot\nenvs: commercial, max\ndefault: commercial\nkeys: BOT_TOKEN, DB_PASS\nEXTRA_KEY\n"
+	text := "# .sec\nproject: some-bot\nprofiles: commercial, max\ndefault: commercial\nkeys: BOT_TOKEN, DB_PASS\nEXTRA_KEY\n"
 	c, warns := parseSecFile(text)
 	if c.Project != "some-bot" {
 		t.Errorf("project = %q", c.Project)
 	}
-	if strings.Join(c.Envs, ",") != "commercial,max" {
-		t.Errorf("envs = %v", c.Envs)
+	if strings.Join(c.Profiles, ",") != "commercial,max" {
+		t.Errorf("profiles = %v", c.Profiles)
 	}
 	if c.Default != "commercial" {
 		t.Errorf("default = %q", c.Default)
@@ -95,5 +95,10 @@ func TestParseSecFile(t *testing.T) {
 	}
 	if _, w := parseSecFile("bogus: x\n"); len(w) != 1 {
 		t.Errorf("ожидалось 1 предупреждение о неизвестной директиве, got %v", w)
+	}
+	// envs: — прежнее имя директивы: подсказка о переименовании, значения не применяются
+	c, w := parseSecFile("envs: a, b\n")
+	if len(w) != 1 || len(c.Profiles) != 0 {
+		t.Errorf("envs: ожидалась подсказка про profiles: и пустые Profiles, got %v %v", w, c.Profiles)
 	}
 }

@@ -26,18 +26,40 @@ func TestFingerprintKeyed(t *testing.T) {
 	}
 }
 
-func TestStoreProjEnv(t *testing.T) {
+func TestStoreProjProfile(t *testing.T) {
 	if ProjKey("svc", "") != "svc" {
-		t.Error("без инстанса — проект как есть")
+		t.Error("без профиля — проект как есть")
 	}
 	if ProjKey("svc", "commercial") != "svc@commercial" {
-		t.Error("с инстансом — склейка через @")
+		t.Error("с профилем — склейка через @")
 	}
-	if b, e := BaseAndEnv("svc@commercial"); b != "svc" || e != "commercial" {
-		t.Errorf("BaseAndEnv(svc@commercial) = %q, %q", b, e)
+	if b, p := BaseAndProfile("svc@commercial"); b != "svc" || p != "commercial" {
+		t.Errorf("BaseAndProfile(svc@commercial) = %q, %q", b, p)
 	}
-	if b, e := BaseAndEnv("svc"); b != "svc" || e != "" {
-		t.Errorf("BaseAndEnv(svc) = %q, %q", b, e)
+	if b, p := BaseAndProfile("svc"); b != "svc" || p != "" {
+		t.Errorf("BaseAndProfile(svc) = %q, %q", b, p)
+	}
+}
+
+// DisplayProj: базовый набор сервиса с профилями печатается явной формой
+// "svc@" — голый "svc" в папке с default из .sec разрешился бы в профиль.
+func TestDisplayProj(t *testing.T) {
+	st := &Store{Projects: map[string]map[string]Secret{
+		"svc":      {"K": {Value: "v"}},
+		"svc@prod": {"K": {Value: "v"}},
+		"plain":    {"K": {Value: "v"}},
+	}}
+	if got := st.DisplayProj("svc"); got != "svc@" {
+		t.Errorf("база с профилями: DisplayProj(svc) = %q, ожидалось svc@", got)
+	}
+	if got := st.DisplayProj("svc@prod"); got != "svc@prod" {
+		t.Errorf("DisplayProj(svc@prod) = %q", got)
+	}
+	if got := st.DisplayProj("plain"); got != "plain" {
+		t.Errorf("сервис без профилей: DisplayProj(plain) = %q", got)
+	}
+	if got := st.DisplayRef("svc/K"); got != "svc@/K" {
+		t.Errorf("DisplayRef(svc/K) = %q, ожидалось svc@/K", got)
 	}
 }
 

@@ -5,7 +5,7 @@ package command
 //   sec __complete <слова...>     — скрытый бэкенд: по уже набранным словам
 //                                   печатает кандидатов (по одному в строке).
 // Скрипт дёргает __complete на каждый TAB. Печатаются ТОЛЬКО имена (подкоманды,
-// проекты, ключи, инстансы, флаги) — значения секретов сюда не попадают.
+// проекты, ключи, профили, флаги) — значения секретов сюда не попадают.
 // Спецстрока "__files__" просит шелл дополнить путями (для scan/redact/backup/…).
 
 import (
@@ -60,36 +60,32 @@ var fileCommandSet = map[string]bool{
 // примерно в синхроне с флагами команд — рассинхрон не критичен, лишь косметика).
 var completionFlags = map[string][]string{
 	"skills":  {"--target", "--dir", "--link", "--force"},
-	"set":     {"--clipboard", "--clear", "--stdin", "--from-file", "--note", "--kind", "--override", "-e", "--env"},
-	"gen":     {"--len", "--symbols", "--clip", "--note", "--kind", "-e", "--env"},
-	"get":     {"--clip", "--peek", "--fingerprint", "--once", "--prev", "--clear-after", "--out", "-e", "--env"},
-	"history": {"--json", "-e", "--env"},
-	"undo":    {"-e", "--env"},
-	"redo":    {"-e", "--env"},
-	"forget":  {"-e", "--env"},
-	"meta":    {"--note", "--kind", "--rotate-url", "--rotate-every", "--expires", "--json", "-e", "--env"},
+	"set":     {"--clipboard", "--clear", "--stdin", "--from-file", "--note", "--kind", "--override"},
+	"gen":     {"--len", "--symbols", "--clip", "--note", "--kind"},
+	"get":     {"--clip", "--peek", "--fingerprint", "--once", "--prev", "--clear-after", "--out"},
+	"history": {"--json"},
+	"meta":    {"--note", "--kind", "--rotate-url", "--rotate-every", "--expires", "--json"},
 	"stale":   {"--older-than", "--json"},
-	"otp":     {"--clip", "-e", "--env"},
-	"verify":  {"-e", "--env"},
-	"diff":    {"--sudo", "--only", "-e", "--env"},
-	"ls":      {"-l", "--json", "--filter", "-f", "-e", "--env"},
-	"find":    {"-l", "--json", "-e", "--env"},
-	"rm":      {"--all", "-e", "--env"},
-	"mv":      {"--force", "-e", "--env"},
-	"cp":      {"--force", "-e", "--env"},
-	"link":    {"--parent-env", "-e", "--env"},
-	"unlink":  {"--drop", "-e", "--env"},
-	"extend":  {"--from", "--remove", "--parent-env", "-e", "--env"},
-	"run":     {"--only", "--file", "--include-files", "-v", "-e", "--env"},
-	"export":  {"--file", "--include-files", "-e", "--env"},
-	"deploy":  {"--to", "--only", "--after", "--sudo", "--replace", "--no-backup", "--dry-run", "--yes", "-e", "--env"},
-	"import":  {"--file", "--from-json", "--clipboard", "--from-infisical", "--infisical-env", "--path", "--projectId", "--token", "-e", "--env"},
-	"push":    {"--to-infisical", "--infisical-env", "--path", "--only", "-e", "--env"},
-	"check":   {"--file", "--all-envs", "-e", "--env"},
+	"otp":     {"--clip"},
+	"diff":    {"--sudo", "--only"},
+	"ls":      {"-l", "--json", "--filter", "-f"},
+	"find":    {"-l", "--json"},
+	"rm":      {"--all"},
+	"mv":      {"--force"},
+	"cp":      {"--force"},
+	"unlink":  {"--drop"},
+	"extend":  {"--from", "--remove"},
+	"run":     {"--only", "--file", "--include-files", "-v"},
+	"export":  {"--file", "--include-files"},
+	"link":    {"--force"},
+	"deploy":  {"--to", "--only", "--after", "--sudo", "--replace", "--no-backup", "--dry-run", "--yes"},
+	"import":  {"--file", "--from-json", "--clipboard", "--from-infisical", "--infisical-env", "--path", "--projectId", "--token"},
+	"push":    {"--to-infisical", "--infisical-env", "--path", "--only"},
+	"check":   {"--file", "--all-profiles"},
 	"scan":    {"--staged", "--min", "--history", "--include-config"},
 	"redact":  {"--min", "--history", "--include-config", "--mask", "--file"},
-	"render":  {"--file", "--proj", "-e", "--env"},
-	"share":   {"--ttl", "--multi", "--file", "--no-clip", "-e", "--env"},
+	"render":  {"--file", "--proj"},
+	"share":   {"--ttl", "--multi", "--file", "--no-clip"},
 	"backup":  {"--file"},
 	"restore": {"--file", "--replace"},
 	"sync":    {"--file"},
@@ -151,11 +147,6 @@ func completeCandidates(st *store.Store, args []string) []string {
 	}
 	sub := canonicalSub(prior[0])
 
-	// значение -e/--env — инстансы из стора
-	if last := prior[len(prior)-1]; last == "-e" || last == "--env" {
-		return matchPrefix(storeEnvs(st), cur)
-	}
-
 	// флаг
 	if strings.HasPrefix(cur, "-") {
 		return matchPrefix(completionFlags[sub], cur)
@@ -171,7 +162,7 @@ func completeCandidates(st *store.Store, args []string) []string {
 	case refCommandSet[sub]:
 		return refCandidates(st, cur)
 	case projCommandSet[sub]:
-		return matchPrefix(storeProjectBases(st), cur)
+		return matchPrefix(storeProjectNames(st), cur)
 	case fileCommandSet[sub]:
 		return []string{"__files__"}
 	}
@@ -195,63 +186,60 @@ func canonicalSub(s string) string {
 	return s
 }
 
-// refCandidates дополняет ссылку proj/KEY: до слэша — имена проектов с "/",
-// после — ключи проекта (базового и всех его инстансов, включая унаследованные).
+// refCandidates дополняет ссылку proj[@profile]/KEY: до слэша — имена
+// проектов (базовые и с профилем) с "/", после — ключи проекта. Для базового
+// имени без '@' ключи собираются по всем профилям сервиса (включая
+// унаследованные), для явного @-адреса — только его.
 func refCandidates(st *store.Store, cur string) []string {
 	if st == nil {
 		return nil
 	}
 	if i := strings.IndexByte(cur, '/'); i >= 0 {
-		proj := cur[:i]
+		projPart := cur[:i]
+		base, prof, explicit := splitProfile(projPart)
 		keys := map[string]bool{}
-		for p := range st.Projects {
-			if svc, _ := store.BaseAndEnv(p); svc == proj {
-				for k := range st.EffectiveKeys(p) {
-					keys[k] = true
+		if explicit {
+			for k := range st.EffectiveKeys(store.ProjKey(base, prof)) {
+				keys[k] = true
+			}
+		} else {
+			for p := range st.Projects {
+				if svc, _ := store.BaseAndProfile(p); svc == projPart {
+					for k := range st.EffectiveKeys(p) {
+						keys[k] = true
+					}
 				}
 			}
 		}
 		out := make([]string, 0, len(keys))
 		for k := range keys {
-			out = append(out, proj+"/"+k)
+			out = append(out, projPart+"/"+k)
 		}
 		return matchPrefix(out, cur)
 	}
-	bases := storeProjectBases(st)
-	out := make([]string, 0, len(bases))
-	for _, svc := range bases {
-		out = append(out, svc+"/")
+	names := storeProjectNames(st)
+	out := make([]string, 0, len(names))
+	for _, n := range names {
+		out = append(out, n+"/")
 	}
 	return matchPrefix(out, cur)
 }
 
-// storeProjectBases — уникальные имена сервисов (без инстанса) из стора.
-func storeProjectBases(st *store.Store) []string {
+// storeProjectNames — имена проектов для дополнения: базовые сервисы плюс
+// полные формы с профилем (svc@prod).
+func storeProjectNames(st *store.Store) []string {
 	if st == nil {
 		return nil
 	}
 	seen := map[string]bool{}
 	var out []string
 	for p := range st.Projects {
-		if svc, _ := store.BaseAndEnv(p); !seen[svc] {
-			seen[svc] = true
-			out = append(out, svc)
-		}
-	}
-	return out
-}
-
-// storeEnvs — уникальные имена инстансов (часть после @) из стора.
-func storeEnvs(st *store.Store) []string {
-	if st == nil {
-		return nil
-	}
-	seen := map[string]bool{}
-	var out []string
-	for p := range st.Projects {
-		if _, env := store.BaseAndEnv(p); env != "" && !seen[env] {
-			seen[env] = true
-			out = append(out, env)
+		svc, _ := store.BaseAndProfile(p)
+		for _, n := range []string{svc, p} {
+			if !seen[n] {
+				seen[n] = true
+				out = append(out, n)
+			}
 		}
 	}
 	return out

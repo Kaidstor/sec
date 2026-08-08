@@ -92,7 +92,6 @@ func shareCreateCommand(args []string) int {
 	fs.BoolVar(&noClip, "no-clip", false, "не копировать ссылку в буфер обмена")
 	fs.BoolVar(&all, "all", false, "поделиться проектом целиком (пак: все ключи одной ссылкой)")
 	fs.StringVar(&only, "only", "", "поделиться паком из перечисленных ключей (через запятую)")
-	getEnv := addEnvFlag(fs)
 	_ = fs.Parse(rest)
 	// flag прекращает разбор на первом позиционном — всё после него пришло бы
 	// сюда молча проигнорированным (например --multi после "-"); не молчим
@@ -133,16 +132,16 @@ func shareCreateCommand(args []string) int {
 		if st == nil {
 			die("%v", storeErr)
 		}
-		proj, _ := resolveServiceProj(ref, fs, getEnv())
+		proj, _ := resolveServiceProj(ref, fs)
 		keys := st.EffectiveKeys(proj)
 		if len(keys) == 0 {
-			die("в проекте %s нет ключей (смотри: sec ls)", store.RefToCLIProj(proj))
+			die("в проекте %s нет ключей (смотри: sec ls)", proj)
 		}
 		entries, perr := packEntries(keys, only)
 		if perr != nil {
-			die("%s: %v", store.RefToCLIProj(proj), perr)
+			die("%s: %v", proj, perr)
 		}
-		svc, _ := store.BaseAndEnv(proj)
+		svc, _ := store.BaseAndProfile(proj)
 		env = share.Envelope{Type: "pack", Project: svc, Entries: entries}
 		target = fmt.Sprintf("%s (пак, %d ключей)", proj, len(entries))
 	case fromFile != "":
@@ -203,7 +202,7 @@ func shareCreateCommand(args []string) int {
 		env = share.Envelope{Type: "text", Data: data}
 		target = "(stdin)"
 	default:
-		proj, key := resolveKeyRef(ref, fs, getEnv(), "sec share <proj>/<KEY> | - | --file <путь>")
+		proj, key := resolveKeyRef(ref, fs, "sec share <proj>/<KEY> | - | --file <путь>")
 		if st == nil {
 			die("%v", storeErr)
 		}

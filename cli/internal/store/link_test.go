@@ -153,15 +153,6 @@ func TestReferrersAndExtenders(t *testing.T) {
 	}
 }
 
-func TestRefToCLIProj(t *testing.T) {
-	if got := RefToCLIProj("svc@prod"); got != "svc -e prod" {
-		t.Errorf("RefToCLIProj(svc@prod) = %q", got)
-	}
-	if got := RefToCLIProj("svc"); got != "svc" {
-		t.Errorf("RefToCLIProj(svc) = %q", got)
-	}
-}
-
 func TestSplitRefAndCLI(t *testing.T) {
 	for _, c := range []struct{ in, proj, key string }{
 		{"base/X", "base", "X"},
@@ -176,11 +167,5 @@ func TestSplitRefAndCLI(t *testing.T) {
 		if _, _, ok := splitRef(bad); ok {
 			t.Errorf("splitRef(%q) должен быть невалиден", bad)
 		}
-	}
-	if got := RefToCLI("svc@prod/TOKEN"); got != "svc/TOKEN -e prod" {
-		t.Errorf("RefToCLI(svc@prod/TOKEN) = %q", got)
-	}
-	if got := RefToCLI("svc/TOKEN"); got != "svc/TOKEN" {
-		t.Errorf("RefToCLI(svc/TOKEN) = %q", got)
 	}
 }

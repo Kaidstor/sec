@@ -269,8 +269,9 @@ const maxRefDepth = 32 // предел длины цепочки ссылок (�
 // внутренний адрес "proj/KEY" на проект и ключ.
 func SplitRef(ref string) (proj, key string, ok bool) { return splitRef(ref) }
 
-// splitRef разбирает внутренний адрес "proj/KEY" (proj может быть service@env,
-// оба конца без '/').
+// splitRef разбирает внутренний адрес "proj/KEY" (proj может быть
+// service@profile, оба конца без '/'). Внутренний адрес совпадает с
+// CLI-формой — в подсказки и сообщения он идёт как есть.
 func splitRef(ref string) (proj, key string, ok bool) {
 	i := strings.LastIndexByte(ref, '/')
 	if i <= 0 || i == len(ref)-1 {
@@ -279,28 +280,30 @@ func splitRef(ref string) (proj, key string, ok bool) {
 	return ref[:i], ref[i+1:], true
 }
 
-// RefToCLI переводит внутренний адрес "service@env/KEY" в удобную для набора
-// форму "service/KEY" или "service/KEY -e env" (для подсказок в сообщениях).
-func RefToCLI(internal string) string {
-	proj, key, ok := splitRef(internal)
-	if !ok {
-		return internal
+// DisplayProj — внутреннее имя проекта как копипастный CLI-адрес. Базовый
+// набор сервиса, у которого в сторе есть профили, печатается явной формой
+// "svc@": голый "svc", вставленный в папке с default из .sec, разрешился бы
+// в дефолтный профиль — то есть в другой набор секретов.
+func (st *Store) DisplayProj(proj string) string {
+	base, prof := BaseAndProfile(proj)
+	if prof != "" {
+		return proj
 	}
-	svc, env := BaseAndEnv(proj)
-	if env == "" {
-		return svc + "/" + key
+	for p := range st.Projects {
+		if b, pr := BaseAndProfile(p); b == base && pr != "" {
+			return proj + "@"
+		}
 	}
-	return svc + "/" + key + " -e " + env
+	return proj
 }
 
-// RefToCLIProj переводит внутренний проект "service@env" в CLI-форму
-// "service" или "service -e env".
-func RefToCLIProj(proj string) string {
-	svc, env := BaseAndEnv(proj)
-	if env == "" {
-		return svc
+// DisplayRef — DisplayProj для полного адреса "proj/KEY".
+func (st *Store) DisplayRef(ref string) string {
+	proj, key, ok := splitRef(ref)
+	if !ok {
+		return ref
 	}
-	return svc + " -e " + env
+	return st.DisplayProj(proj) + "/" + key
 }
 
 // resolveSecret идёт по цепочке ссылок от собственного ключа proj/key к
@@ -449,7 +452,7 @@ func (st *Store) RemoveExtend(proj, parent string) bool {
 	return found
 }
 
-// referrers возвращает CLI-адреса ключей-ссылок, чей Ref указывает ровно на
+// referrers возвращает адреса ключей-ссылок, чей Ref указывает ровно на
 // target ("proj/KEY"). Для предупреждения перед удалением ключа: такие ссылки
 // станут битыми.
 func (st *Store) Referrers(target string) []string {
@@ -457,7 +460,7 @@ func (st *Store) Referrers(target string) []string {
 	for _, p := range SortedKeys(st.Projects) {
 		for _, k := range SortedKeys(st.Projects[p]) {
 			if st.Projects[p][k].Ref == target {
-				out = append(out, RefToCLI(p+"/"+k))
+				out = append(out, st.DisplayRef(p+"/"+k))
 			}
 		}
 	}
@@ -475,20 +478,20 @@ func (st *Store) ProjectReferrers(proj string) []string {
 				continue
 			}
 			if rp, _, ok := splitRef(s.Ref); ok && rp == proj {
-				out = append(out, RefToCLI(p+"/"+k))
+				out = append(out, st.DisplayRef(p+"/"+k))
 			}
 		}
 	}
 	return out
 }
 
-// extenders — CLI-имена проектов, напрямую наследующих от parent.
+// extenders — имена проектов, напрямую наследующих от parent.
 func (st *Store) Extenders(parent string) []string {
 	var out []string
 	for _, p := range SortedKeys(st.Extends) {
 		for _, pp := range st.Extends[p] {
 			if pp == parent {
-				out = append(out, RefToCLIProj(p))
+				out = append(out, st.DisplayProj(p))
 				break
 			}
 		}

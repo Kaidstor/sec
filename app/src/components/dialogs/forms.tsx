@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { KEY_RE, PROJ_RE, KINDS, SecretEntry, dupeHint, keyArgs, runSec, runSecFull, splitProject } from "../../lib/sec";
+import { KEY_RE, PROJ_RE, KINDS, SecretEntry, dupeHint, keyArgs, runSec, runSecFull } from "../../lib/sec";
 import { useApp } from "../../store";
 import { Button, Dialog, Field, Input, Select } from "../ui";
 
@@ -39,16 +39,14 @@ export function AddSecretDialog({ initialProject }: { initialProject?: string })
   const submit = async () => {
     const proj = project.trim();
     const k = key.trim();
-    if (!PROJ_RE.test(proj)) return showToast("Имя проекта: a-z, 0-9, точка, дефис (инстанс — через @)");
+    if (!PROJ_RE.test(proj)) return showToast("Имя проекта: a-z, 0-9, точка, дефис (профиль — через @)");
     if (!KEY_RE.test(k)) return showToast("Имя ключа как env-переменная: A-Z, 0-9, _");
     if (!value) return showToast("Пустое значение");
     if (value !== valueRepeat) return showToast("Значения не совпали");
 
-    const { service, env } = splitProject(proj);
-    const args = ["set", `${service}/${k}`, "--stdin"];
+    const args = ["set", `${proj}/${k}`, "--stdin"];
     if (note.trim()) args.push("--note", note.trim());
     if (kind) args.push("--kind", kind);
-    if (env) args.push("-e", env);
 
     setBusy(true);
     try {
@@ -125,16 +123,14 @@ export function GenerateSecretDialog({ initialProject }: { initialProject?: stri
     const proj = project.trim();
     const k = key.trim();
     const len = parseInt(length, 10);
-    if (!PROJ_RE.test(proj)) return showToast("Имя проекта: a-z, 0-9, точка, дефис (инстанс — через @)");
+    if (!PROJ_RE.test(proj)) return showToast("Имя проекта: a-z, 0-9, точка, дефис (профиль — через @)");
     if (!KEY_RE.test(k)) return showToast("Имя ключа как env-переменная: A-Z, 0-9, _");
     if (isNaN(len) || len < 8 || len > 1024) return showToast("Длина — от 8 до 1024");
 
-    const { service, env } = splitProject(proj);
-    const args = ["gen", `${service}/${k}`, "--len", String(len)];
+    const args = ["gen", `${proj}/${k}`, "--len", String(len)];
     if (symbols) args.push("--symbols");
     if (copy) args.push("--clip");
     if (note.trim()) args.push("--note", note.trim());
-    if (env) args.push("-e", env);
 
     setBusy(true);
     try {

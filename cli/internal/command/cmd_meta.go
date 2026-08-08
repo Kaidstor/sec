@@ -88,9 +88,8 @@ func metaCommand(args []string) int {
 	fs.StringVar(&expires, "expires", "", "дедлайн: дата YYYY-MM-DD или интервал от сейчас (30d)")
 	fs.BoolVar(&clear, "clear", false, "снять все метаданные")
 	fs.BoolVar(&asJSON, "json", false, "показать метаданные в JSON")
-	getEnv := addEnvFlag(fs)
 	_ = fs.Parse(rest)
-	proj, key := resolveKeyRef(ref, fs, getEnv(), "sec meta <proj>/<KEY> [--note ... --kind ... --rotate-every 90d]")
+	proj, key := resolveKeyRef(ref, fs, "sec meta <proj>/<KEY> [--note ... --kind ... --rotate-every 90d]")
 
 	setf := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { setf[f.Name] = true })
@@ -124,7 +123,7 @@ func metaCommand(args []string) int {
 	}
 	if _, ok := st.Projects[proj][key]; !ok {
 		if _, org, source, found := st.Lookup(proj, key); found && org == store.OriginExtend {
-			die("%s/%s наследуется из %s — правь метаданные в родителе: sec meta %s", proj, key, source, store.RefToCLI(source))
+			die("%s/%s наследуется из %s — правь метаданные в родителе: sec meta %s", proj, key, source, st.DisplayRef(source))
 		}
 	}
 	sec := mustSecret(st, proj, key)
@@ -224,13 +223,13 @@ func staleCommand(args []string) int {
 	var asJSON bool
 	fs.StringVar(&olderThan, "older-than", "", "порог возраста для ключей без политики, напр. 90d")
 	fs.BoolVar(&asJSON, "json", false, "машинный вывод")
-	getEnv := addEnvFlag(fs)
 	_ = fs.Parse(rest)
 	if service == "" {
 		service = fs.Arg(0)
 	}
-	env := getEnv() // явный -e фильтрует инстанс; без него — все инстансы сервиса
-	checkEnv(env)
+	// svc@prod фильтрует профиль (svc@ — базовый набор); svc — все профили сервиса
+	service, profile, explicitProf := splitProfile(service)
+	checkProfile(profile)
 
 	var threshold time.Duration
 	if olderThan != "" {
@@ -254,11 +253,11 @@ func staleCommand(args []string) int {
 	}
 	var items []staleItem
 	for _, p := range store.SortedKeys(st.Projects) {
-		base, penv := store.BaseAndEnv(p)
+		base, prof := store.BaseAndProfile(p)
 		if service != "" && base != service {
 			continue
 		}
-		if env != "" && penv != env {
+		if explicitProf && prof != profile {
 			continue
 		}
 		keys := st.Projects[p]

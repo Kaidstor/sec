@@ -56,11 +56,11 @@ func dupeHints(st *store.Store, mkey []byte, proj string, written []string) []st
 				continue
 			}
 			others = append(others, e)
-			shown = append(shown, store.RefToCLI(e.addr))
+			shown = append(shown, st.DisplayRef(e.addr))
 		}
 		sort.Slice(others, func(i, j int) bool { return others[i].updatedAt < others[j].updatedAt })
-		hint := fmt.Sprintf("значение %s уже есть в %s", store.RefToCLI(self), strings.Join(shown, ", "))
-		if cmd := linkHintCmd(self, others); cmd != "" {
+		hint := fmt.Sprintf("значение %s уже есть в %s", st.DisplayRef(self), strings.Join(shown, ", "))
+		if cmd := linkHintCmd(st.DisplayRef(self), others); cmd != "" {
 			hint += " — вместо копии можно ссылку: " + cmd
 		} else {
 			hint += " — вместо копии можно ссылку (sec link)"
@@ -70,31 +70,26 @@ func dupeHints(st *store.Store, mkey []byte, proj string, written []string) []st
 	return hints
 }
 
-// linkHintCmd собирает копипастную команду sec link на первого выразимого
-// кандидата в родители (candidates отсортированы от старейшего — он и есть
-// «оригинал»). "" — команду не выразить: у link нет способа задать родителя
-// без инстанса, когда сам ключ с инстансом (--parent-env "" падает обратно
-// в инстанс ключа).
+// linkHintCmd собирает копипастную команду sec link на старейшего кандидата в
+// родители (он и есть «оригинал»). Адрес родителя — кратчайшей формой: равный
+// профиль наследуется от ключа и опускается, чужой — svc@prof, базовый набор
+// при ключе с профилем — svc@.
 func linkHintCmd(self string, candidates []dupeEntry) string {
-	svcEnv, key, _ := strings.Cut(self, "/")
-	svc, env := store.BaseAndEnv(svcEnv)
-	for _, c := range candidates {
-		pSvcEnv, pKey, _ := strings.Cut(c.addr, "/")
-		pSvc, pEnv := store.BaseAndEnv(pSvcEnv)
-		if env != "" && pEnv == "" {
-			continue
-		}
-		cmd := "sec link " + svc + "/" + key
-		if env != "" {
-			cmd += " -e " + env
-		}
-		cmd += " " + pSvc + "/" + pKey
-		if pEnv != "" && pEnv != env {
-			cmd += " --parent-env " + pEnv
-		}
-		return cmd + " --force"
+	if len(candidates) == 0 {
+		return ""
 	}
-	return ""
+	selfProj, _, _ := strings.Cut(self, "/")
+	_, prof := store.BaseAndProfile(selfProj)
+	pProj, pKey, _ := strings.Cut(candidates[0].addr, "/")
+	pSvc, pProf := store.BaseAndProfile(pProj)
+	parent := pProj
+	switch {
+	case pProf == prof:
+		parent = pSvc
+	case pProf == "":
+		parent = pSvc + "@"
+	}
+	return "sec link " + self + " " + parent + "/" + pKey + " --force"
 }
 
 // printDupeHints — обёртка для команд записи: печатает подсказки в stderr.

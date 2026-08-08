@@ -67,7 +67,7 @@ func TestDupeHintsEncSeparatesBinary(t *testing.T) {
 	}
 }
 
-func TestDupeHintsEnvForms(t *testing.T) {
+func TestDupeHintsProfileForms(t *testing.T) {
 	mkey := []byte("k")
 	st := &store.Store{Projects: map[string]map[string]store.Secret{
 		"shared":      {"TOKEN": {Value: "v", UpdatedAt: "2025-01-01T00:00:00Z"}},
@@ -77,26 +77,22 @@ func TestDupeHintsEnvForms(t *testing.T) {
 		"plain":       {"TOKEN": {Value: "v2", UpdatedAt: "2026-06-01T00:00:00Z"}},
 	}}
 
-	// родитель с инстансом, ключ с инстансом → --parent-env не нужен при равных,
-	// здесь равные: svc@prod ↔ shared@prod
+	// равные профили (svc@prod ↔ shared@prod) — профиль родителя наследуется,
+	// в команде опускается
 	hints := dupeHints(st, mkey, "svc@prod", []string{"TOKEN"})
-	if len(hints) != 1 || !strings.Contains(hints[0], "sec link svc/TOKEN -e prod shared/TOKEN --force") {
-		t.Errorf("равные инстансы: ожидался link без --parent-env: %v", hints)
+	if len(hints) != 1 || !strings.Contains(hints[0], "sec link svc@prod/TOKEN shared/TOKEN --force") {
+		t.Errorf("равные профили: ожидался родитель без @: %v", hints)
 	}
 
-	// ключ с инстансом, единственный кандидат без инстанса → команду не
-	// выразить, подсказка без готовой команды
+	// ключ с профилем, кандидат из базового набора → parent@ (явно без профиля)
 	hints = dupeHints(st, mkey, "svc@staging", []string{"TOKEN"})
-	if len(hints) != 1 || strings.Contains(hints[0], "sec link svc/TOKEN") {
-		t.Errorf("родитель без инстанса при ключе с инстансом невыразим: %v", hints)
-	}
-	if !strings.Contains(hints[0], "(sec link)") {
-		t.Errorf("ожидалась подсказка без готовой команды: %v", hints)
+	if len(hints) != 1 || !strings.Contains(hints[0], "sec link svc@staging/TOKEN shared@/TOKEN --force") {
+		t.Errorf("базовый родитель при ключе с профилем — shared@/: %v", hints)
 	}
 
-	// ключ без инстанса, старейший кандидат с инстансом → --parent-env
+	// ключ без профиля, старейший кандидат с профилем → явный @prod у родителя
 	hints = dupeHints(st, mkey, "plain", []string{"TOKEN"})
-	if len(hints) != 1 || !strings.Contains(hints[0], "sec link plain/TOKEN shared/TOKEN --parent-env prod --force") {
-		t.Errorf("ожидался --parent-env prod (старейший кандидат): %v", hints)
+	if len(hints) != 1 || !strings.Contains(hints[0], "sec link plain/TOKEN shared@prod/TOKEN --force") {
+		t.Errorf("ожидался родитель shared@prod (старейший кандидат): %v", hints)
 	}
 }

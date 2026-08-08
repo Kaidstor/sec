@@ -2,7 +2,7 @@ import { Action, ActionPanel, Clipboard, Form, Icon, LaunchProps, Toast, popToRo
 import { useCachedPromise } from "@raycast/utils";
 import { useState } from "react";
 import { ProjectField, rememberProject, useProjectPicker } from "./project-field";
-import { KEY_RE, KINDS, dupeHint, listSecrets, runSecWithInput, splitProject } from "./sec";
+import { KEY_RE, KINDS, dupeHint, listSecrets, runSecWithInput } from "./sec";
 
 interface FormValues {
   project: string;
@@ -49,11 +49,9 @@ export default function AddSecret(props: Props) {
       return;
     }
 
-    const { service, env } = splitProject(project);
-    const args = ["set", `${service}/${key}`, "--stdin"];
+    const args = ["set", `${project}/${key}`, "--stdin"];
     if (values.note.trim()) args.push("--note", values.note.trim());
     if (values.kind) args.push("--kind", values.kind);
-    if (env) args.push("-e", env);
 
     try {
       const { stderr } = await runSecWithInput(args, values.value);

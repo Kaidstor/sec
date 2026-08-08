@@ -32,7 +32,6 @@ func deployCommand(args []string) int {
 	fs.BoolVar(&noBackup, "no-backup", false, "не делать <путь>.bak-<время> перед записью")
 	fs.BoolVar(&dryRun, "dry-run", false, "показать, что изменится, и выйти без записи")
 	fs.BoolVar(&yes, "yes", false, "не спрашивать подтверждения (CI)")
-	getEnv := addEnvFlag(fs)
 	// collectPositionals, а не splitArgs: иначе `sec deploy --sudo whois --to …`
 	// останавливает разбор флагов на `whois`, и --to молча теряется.
 	pos := collectPositionals(fs, args)
@@ -43,10 +42,10 @@ func deployCommand(args []string) int {
 	if len(pos) > 0 {
 		service = pos[0]
 	}
-	proj, _ := resolveServiceProj(service, fs, getEnv())
+	proj, _ := resolveServiceProj(service, fs)
 
 	if to == "" {
-		die("укажи цель: sec deploy %s --to <host>:/app/.env", store.RefToCLIProj(proj))
+		die("укажи цель: sec deploy %s --to <host>:/app/.env", proj)
 	}
 	t, err := parseEnvTarget(to)
 	if err != nil {
@@ -76,8 +75,8 @@ func deployCommand(args []string) int {
 	}
 	if ml := dotenv.MultilineKeys(string(data)); len(ml) > 0 {
 		die("в %s есть многострочные значения (%s) — построчный merge порвал бы их пополам.\n"+
-			"     Такой файл править руками; многострочному секрету в .env не место (sec get %s --out <файл>)",
-			t, strings.Join(ml, ", "), store.RefToCLI(proj+"/<KEY>"))
+			"     Такой файл править руками; многострочному секрету в .env не место (sec get %s/<KEY> --out <файл>)",
+			t, strings.Join(ml, ", "), st.DisplayProj(proj))
 	}
 	fileKV := parseEnvTargetFile(t, data)
 	if only != "" { // ключи вне --only не наши: в отчёт как «только на хосте» им нельзя
@@ -164,7 +163,7 @@ func deployCommand(args []string) int {
 func buildEnvFile(proj, orig string, keys map[string]store.Secret, entries []envEntry, replace bool) (string, []string) {
 	if replace {
 		var b strings.Builder
-		fmt.Fprintf(&b, "# сгенерировано sec из проекта %s — не коммитить\n", store.RefToCLIProj(proj))
+		fmt.Fprintf(&b, "# сгенерировано sec из проекта %s — не коммитить\n", proj)
 		names := store.SortedKeys(keys)
 		for _, k := range names {
 			b.WriteString(dotenv.Line(k, keys[k].Value) + "\n")

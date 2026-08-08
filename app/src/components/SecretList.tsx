@@ -92,14 +92,14 @@ export function SecretList() {
   );
 
   function ProjectSection({ project, entries }: { project: string; entries: SecretEntry[] }) {
-    const { service, env } = splitProject(project);
+    const { service, profile } = splitProject(project);
     return (
       <section>
         <div className="group/hdr sticky top-0 z-10 flex items-center gap-2 border-b border-zinc-800 bg-zinc-925 px-4 py-1.5">
           <span className="font-mono text-[11px] font-semibold tracking-wider text-zinc-400">{service}</span>
-          {env && (
+          {profile && (
             <span className="rounded border border-sky-500/40 bg-sky-500/10 px-1 py-px font-mono text-[9px] font-semibold text-sky-400">
-              {env}
+              {profile}
             </span>
           )}
           <span className="text-[10px] text-zinc-600">{entries.length}</span>

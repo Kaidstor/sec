@@ -119,9 +119,6 @@ func neverUsed(u *stats.File) (cmds, flags []string) {
 			continue
 		}
 		for _, f := range completionFlags[c] {
-			if f == "--env" { // длинная форма -e, отдельной фичей не считается
-				continue
-			}
 			if u.Keys[c+" "+f] == nil {
 				flags = append(flags, c+" "+f)
 			}

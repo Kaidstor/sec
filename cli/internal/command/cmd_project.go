@@ -27,31 +27,32 @@ func lsCommand(args []string) int {
 	fs.BoolVar(&asJSON, "json", false, "машинный вывод JSON (без значений)")
 	fs.StringVar(&filter, "filter", "", "показать только совпавшие имена: подстрока без учёта регистра или glob (*_TOKEN)")
 	fs.StringVar(&filter, "f", "", "то же, что --filter (короткая форма)")
-	getEnv := addEnvFlag(fs)
 	_ = fs.Parse(rest)
 	if service == "" {
 		service = fs.Arg(0)
 	}
-	env := getEnv()
-	checkEnv(env)
+	// ls не применяет default из .sec: "sec ls svc" показывает профили сервиса,
+	// конкретный профиль — svc@prof, базовый набор — svc@
+	service, profile, explicitProf := splitProfile(service)
+	checkProfile(profile)
 
 	st, mkey, _, err := store.Open(false)
 	if err != nil {
 		die("%v", err)
 	}
 
-	// инстансы сервиса (env-части ключей вида service@env), отсортированные
-	instancesOf := func(svc string) []string {
+	// профили сервиса (части после '@' ключей вида service@profile)
+	profilesOf := func(svc string) []string {
 		set := map[string]struct{}{}
 		for p := range st.Projects {
-			if b, e := store.BaseAndEnv(p); b == svc && e != "" {
-				set[e] = struct{}{}
+			if b, prof := store.BaseAndProfile(p); b == svc && prof != "" {
+				set[prof] = struct{}{}
 			}
 		}
 		return store.SortedKeys(set)
 	}
 
-	// --filter отсекает имена того, что сейчас показываем: проекты, инстансы
+	// --filter отсекает имена того, что сейчас показываем: проекты, профили
 	// или ключи. Поиск по всему стору разом — отдельная команда sec find.
 	keep := func(name string) bool { return matchFilter(filter, name) }
 	nothingFound := func() int {
@@ -83,7 +84,7 @@ func lsCommand(args []string) int {
 				info := keyInfo{Key: k, Enc: s.Enc, UpdatedAt: s.UpdatedAt, History: len(s.History), Meta: s.Meta}
 				val := s.Value
 				if s.Ref != "" { // ссылка — enc/отпечаток/длина считаем по значению родителя
-					info.Ref = store.RefToCLI(s.Ref)
+					info.Ref = st.DisplayRef(s.Ref)
 					if r, _, ok := st.ResolveSecret(proj, k); ok {
 						val, info.Enc = r.Value, r.Enc
 					} else {
@@ -105,31 +106,31 @@ func lsCommand(args []string) int {
 		case service == "":
 			m := map[string][]keyInfo{}
 			for p := range st.Projects {
-				base, _ := store.BaseAndEnv(p)
+				base, _ := store.BaseAndProfile(p)
 				if !keep(base) {
 					continue
 				}
 				m[p] = build(p, "")
 			}
 			v = m
-		case env == "" && len(instancesOf(service)) > 0:
+		case !explicitProf && len(profilesOf(service)) > 0:
 			m := map[string][]keyInfo{}
-			for _, e := range instancesOf(service) {
-				if !keep(e) {
+			for _, prof := range profilesOf(service) {
+				if !keep(prof) {
 					continue
 				}
-				m[e] = build(store.ProjKey(service, e), "")
+				m[prof] = build(store.ProjKey(service, prof), "")
 			}
 			v = m
 		default:
-			v = build(store.ProjKey(service, env), filter)
+			v = build(store.ProjKey(service, profile), filter)
 		}
 		data, _ := json.MarshalIndent(v, "", "  ")
 		fmt.Println(string(data))
 		return 0
 	}
 
-	// список сервисов: группируем service@env под базовым сервисом
+	// список сервисов: группируем service@profile под базовым сервисом
 	if service == "" {
 		if len(st.Projects) == 0 {
 			fmt.Println("хранилище пусто")
@@ -137,7 +138,7 @@ func lsCommand(args []string) int {
 		}
 		bases := map[string]struct{}{}
 		for p := range st.Projects {
-			b, _ := store.BaseAndEnv(p)
+			b, _ := store.BaseAndProfile(p)
 			bases[b] = struct{}{}
 		}
 		shown := 0
@@ -146,8 +147,8 @@ func lsCommand(args []string) int {
 				continue
 			}
 			shown++
-			if insts := instancesOf(b); len(insts) > 0 {
-				fmt.Printf("%-24s инстансы: %s\n", b, strings.Join(insts, ", "))
+			if profs := profilesOf(b); len(profs) > 0 {
+				fmt.Printf("%-24s профили: %s\n", b, strings.Join(profs, ", "))
 			} else {
 				fmt.Printf("%-24s %d ключ(ей)\n", b, len(st.Projects[b]))
 			}
@@ -158,16 +159,21 @@ func lsCommand(args []string) int {
 		return 0
 	}
 
-	// сервис без -e и с инстансами → показать инстансы
-	if env == "" {
-		if insts := instancesOf(service); len(insts) > 0 {
+	// сервис без '@' и с профилями → показать профили (плюс базовый набор,
+	// если он не пуст: без строки "svc@" его не видно за списком профилей)
+	if !explicitProf {
+		if profs := profilesOf(service); len(profs) > 0 {
 			shown := 0
-			for _, e := range insts {
-				if !keep(e) {
+			if filter == "" && len(st.Projects[service]) > 0 {
+				shown++
+				fmt.Printf("%-32s %d ключ(ей)\n", service+"@", len(st.Projects[service]))
+			}
+			for _, prof := range profs {
+				if !keep(prof) {
 					continue
 				}
 				shown++
-				fmt.Printf("%-18s -e %-14s %d ключ(ей)\n", service, e, len(st.Projects[store.ProjKey(service, e)]))
+				fmt.Printf("%-32s %d ключ(ей)\n", store.ProjKey(service, prof), len(st.Projects[store.ProjKey(service, prof)]))
 			}
 			if shown == 0 {
 				return nothingFound()
@@ -176,20 +182,16 @@ func lsCommand(args []string) int {
 		}
 	}
 
-	// ключи конкретного проекта (service или service@env), включая унаследованные
-	sp := store.ProjKey(service, env)
+	// ключи конкретного проекта (service или service@profile), включая унаследованные
+	sp := store.ProjKey(service, profile)
 	eff := st.EffectiveKeys(sp)
 	if len(eff) == 0 {
 		die("проект %q пуст или не существует (sec ls)", sp)
 	}
 	if parents := st.Extends[sp]; len(parents) > 0 {
-		var labels []string
-		for _, p := range parents {
-			if svc, penv := store.BaseAndEnv(p); penv == "" {
-				labels = append(labels, svc)
-			} else {
-				labels = append(labels, svc+" -e "+penv)
-			}
+		labels := make([]string, len(parents))
+		for i, p := range parents {
+			labels[i] = st.DisplayProj(p)
 		}
 		fmt.Printf("наследует (read-only): %s\n", strings.Join(labels, ", "))
 	}
@@ -203,9 +205,9 @@ func lsCommand(args []string) int {
 		mark := ""
 		switch org {
 		case store.OriginRef:
-			mark = "  → " + store.RefToCLI(source)
+			mark = "  → " + st.DisplayRef(source)
 		case store.OriginExtend:
-			mark = "  ⤷ " + store.RefToCLI(source)
+			mark = "  ⤷ " + st.DisplayRef(source)
 		}
 		if long {
 			fmt.Printf("%-32s %s%s\n", k, keyDetails(eff[k]), mark)
@@ -222,14 +224,14 @@ func lsCommand(args []string) int {
 // findCommand ищет ключи по всему хранилищу и печатает адреса совпавших
 // (значений не показывает) — чтобы не листать стор целиком в поисках нужного.
 // Шаблон: подстрока без учёта регистра либо glob (* и ?); со слэшем внутри
-// («gidcaf/*TOKEN») левая часть матчится на проект, правая — на ключ.
+// («gidcaf/*TOKEN») левая часть матчится на проект (вместе с профилем:
+// svc@prod, svc@*), правая — на ключ.
 func findCommand(args []string) int {
 	pat, rest := splitArgs(args)
 	fs := flag.NewFlagSet("find", flag.ExitOnError)
 	var long, asJSON bool
 	fs.BoolVar(&long, "l", false, "показать даты обновления / метаданные")
 	fs.BoolVar(&asJSON, "json", false, "машинный вывод JSON (без значений)")
-	getEnv := addEnvFlag(fs)
 	_ = fs.Parse(rest)
 	if pat == "" {
 		pat = fs.Arg(0)
@@ -237,8 +239,6 @@ func findCommand(args []string) int {
 	if pat == "" {
 		die("укажи, что искать: sec find <шаблон> (подстрока или glob, напр. token, '*_URL', 'gidcaf/*')")
 	}
-	env := getEnv()
-	checkEnv(env)
 	projPat, keyPat, scoped := strings.Cut(pat, "/")
 
 	st, _, _, err := store.Open(false)
@@ -247,9 +247,9 @@ func findCommand(args []string) int {
 	}
 
 	type hit struct {
-		Ref       string      `json:"ref"`     // CLI-адрес: svc/KEY (+ " -e инстанс")
-		Project   string      `json:"project"` // сервис без инстанса
-		Env       string      `json:"env,omitempty"`
+		Ref       string      `json:"ref"`     // адрес svc[@profile]/KEY
+		Project   string      `json:"project"` // сервис без профиля
+		Profile   string      `json:"profile,omitempty"`
 		Key       string      `json:"key"`
 		Link      string      `json:"link,omitempty"` // куда указывает ключ-ссылка
 		UpdatedAt string      `json:"updatedAt"`
@@ -258,11 +258,10 @@ func findCommand(args []string) int {
 	}
 	hits := []hit{}
 	for _, p := range store.SortedKeys(st.Projects) {
-		base, penv := store.BaseAndEnv(p)
-		if env != "" && penv != env {
-			continue
-		}
-		projHit := matchFilter(projPat, base)
+		base, prof := store.BaseAndProfile(p)
+		// матчим и по полному имени (svc@prod), и по базовому: glob "svc"
+		// должен находить и svc, и svc@prod
+		projHit := matchFilter(projPat, p) || matchFilter(projPat, base)
 		if scoped && !projHit {
 			continue
 		}
@@ -276,10 +275,10 @@ func findCommand(args []string) int {
 				continue
 			}
 			s := st.Projects[p][k]
-			h := hit{Ref: store.RefToCLI(p + "/" + k), Project: base, Env: penv, Key: k,
+			h := hit{Ref: st.DisplayRef(p + "/" + k), Project: base, Profile: prof, Key: k,
 				UpdatedAt: s.UpdatedAt, History: len(s.History), Meta: s.Meta}
 			if s.Ref != "" {
-				h.Link = store.RefToCLI(s.Ref)
+				h.Link = st.DisplayRef(s.Ref)
 			}
 			hits = append(hits, h)
 		}
@@ -304,7 +303,7 @@ func findCommand(args []string) int {
 			mark = "  → " + h.Link
 		}
 		if long {
-			s := st.Projects[store.ProjKey(h.Project, h.Env)][h.Key]
+			s := st.Projects[store.ProjKey(h.Project, h.Profile)][h.Key]
 			fmt.Printf("%-40s %s%s\n", h.Ref, keyDetails(s), mark)
 		} else {
 			fmt.Println(h.Ref + mark)
@@ -342,9 +341,8 @@ func runCommand(args []string) int {
 	fs.BoolVar(&verbose, "v", false, "показать имена инъектированных ключей")
 	fs.BoolVar(&includeFiles, "include-files", false, "инжектить в env и файловые (kind: file) ключи — по умолчанию пропускаются")
 	fs.Var(&mountSpecs, "file", "материализовать файловый секрет во временный файл: [ENV=]<KEY|proj/KEY>[:путь], путь уйдёт в env-переменную (повторяемый)")
-	getEnv := addEnvFlag(fs)
 	_ = fs.Parse(rest)
-	proj, _ := resolveServiceProj(service, fs, getEnv())
+	proj, _ := resolveServiceProj(service, fs)
 
 	mounts, err := parseFileMounts(mountSpecs, proj)
 	if err != nil {
@@ -365,7 +363,7 @@ func runCommand(args []string) int {
 		}
 	}
 
-	extra := selectKeys(keys, only, proj, includeFiles)
+	extra := selectKeys(keys, only, st.DisplayProj(proj), includeFiles)
 
 	path, err := exec.LookPath(tail[0])
 	if err != nil {
@@ -444,9 +442,8 @@ func exportCommand(args []string) int {
 	var includeFiles bool
 	fs.StringVar(&file, "file", "", "путь к .env-файлу (обязателен)")
 	fs.BoolVar(&includeFiles, "include-files", false, "писать в .env и файловые (kind: file) ключи — по умолчанию пропускаются")
-	getEnv := addEnvFlag(fs)
 	_ = fs.Parse(rest)
-	proj, _ := resolveServiceProj(service, fs, getEnv())
+	proj, _ := resolveServiceProj(service, fs)
 	if file == "" {
 		die("export пишет только в файл (защита от утечки в вывод): sec export %s --file .env", proj)
 	}
@@ -475,19 +472,19 @@ func exportCommand(args []string) int {
 		}
 	}
 	if len(written) == 0 {
-		die("в %s только файловые ключи — .env не из чего собрать (--include-files впишет текстовые; sec get %s --out <файл>)",
-			proj, store.RefToCLI(proj+"/<KEY>"))
+		die("в %s только файловые ключи — .env не из чего собрать (--include-files впишет текстовые; sec get %s/<KEY> --out <файл>)",
+			proj, st.DisplayProj(proj))
 	}
 	if err := writeSecretFile(file, []byte(b.String())); err != nil {
 		die("запись %s: %v", file, err)
 	}
 	if len(binSkipped) > 0 {
-		fmt.Fprintf(os.Stderr, "sec: бинарные (файловые) ключи в .env не пишутся, пропущены: %s (sec get %s --out)\n",
-			strings.Join(binSkipped, ", "), store.RefToCLI(proj+"/<KEY>"))
+		fmt.Fprintf(os.Stderr, "sec: бинарные (файловые) ключи в .env не пишутся, пропущены: %s (sec get %s/<KEY> --out)\n",
+			strings.Join(binSkipped, ", "), st.DisplayProj(proj))
 	}
 	if len(fileSkipped) > 0 {
-		fmt.Fprintf(os.Stderr, "sec: файловые (kind: file) ключи пропущены: %s (--include-files впишет; файлом: sec get %s --out)\n",
-			strings.Join(fileSkipped, ", "), store.RefToCLI(proj+"/<KEY>"))
+		fmt.Fprintf(os.Stderr, "sec: файловые (kind: file) ключи пропущены: %s (--include-files впишет; файлом: sec get %s/<KEY> --out)\n",
+			strings.Join(fileSkipped, ", "), st.DisplayProj(proj))
 	}
 	audit.Record("export", proj, "→ "+file)
 	fmt.Printf("записан %s (0600): %s\n", file, strings.Join(written, ", "))
@@ -522,11 +519,10 @@ func importCommand(args []string) int {
 	fs.BoolVar(&fromJSON, "from-json", false, "разбирать источник как JSON, не угадывая формат")
 	fs.BoolVar(&fromClipboard, "clipboard", false, "источник — буфер обмена (.env или JSON)")
 	fs.BoolVar(&fromInfisical, "from-infisical", false, "источник — Infisical (через их CLI), а не файл")
-	fs.StringVar(&ienv, "infisical-env", "", "Infisical: окружение (умолч. — значение -e, иначе dev)")
+	fs.StringVar(&ienv, "infisical-env", "", "Infisical: окружение (умолч. — профиль адреса, иначе dev)")
 	fs.StringVar(&path, "path", "/", "Infisical: путь к папке секретов")
 	fs.StringVar(&projectID, "projectId", "", "Infisical: id проекта (иначе из .infisical.json в текущей папке)")
 	fs.StringVar(&token, "token", "", "Infisical: сервис-токен/идентификатор (иначе текущий логин)")
-	getEnv := addEnvFlag(fs)
 
 	// позиционные: [proj] и/или источник (путь, "-" или сам JSON), в любом порядке
 	var service string
@@ -557,22 +553,18 @@ func importCommand(args []string) int {
 	if sources > 1 {
 		die("источник указан несколько раз — выбери одно: файл, stdin, --clipboard или JSON аргументом")
 	}
-	if service == "" {
-		service = cwdProject()
-	}
-	secEnv := resolvedEnv(getEnv(), service)
-	target := resolveProj(service, secEnv) // куда в sec: service либо service@env
+	target, secProfile := resolveProjP(service) // куда в sec: service либо service@profile
 
 	if fromInfisical {
-		if ienv == "" { // дефолт Infisical-окружения — sec-инстанс, иначе dev
-			if ienv = secEnv; ienv == "" {
+		if ienv == "" { // дефолт Infisical-окружения — sec-профиль, иначе dev
+			if ienv = secProfile; ienv == "" {
 				ienv = "dev"
 			}
 		}
 		return importFromInfisical(target, ienv, path, projectID, token)
 	}
 
-	data, label, path := importSource(inline, file, fromClipboard, service)
+	data, label, path := importSource(inline, file, fromClipboard, target)
 	kv, warns := parseImport(data, fromJSON)
 	for _, w := range warns {
 		fmt.Fprintf(os.Stderr, "sec: %s: %s\n", label, w)

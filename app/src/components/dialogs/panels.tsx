@@ -15,7 +15,6 @@ import {
   shareKey,
   shareLinks,
   sharePack,
-  splitProject,
 } from "../../lib/sec";
 import { THEMES, Theme } from "../../lib/themes";
 import { useUpdater } from "../../lib/updater";
@@ -103,8 +102,7 @@ export function ShareDialog({ project, secretKey }: { project: string; secretKey
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<ShareResult | null>(null);
   const close = () => openDialog(null);
-  const { service, env } = splitProject(project);
-  const target = secretKey ? `${service}/${secretKey}${env ? ` -e ${env}` : ""}` : `${service}${env ? ` -e ${env}` : ""} (пак)`;
+  const target = secretKey ? `${project}/${secretKey}` : `${project} (пак)`;
 
   const toggle = (k: string) =>
     setSelected((s) => {

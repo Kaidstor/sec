@@ -37,19 +37,18 @@ func pushCommand(args []string) int {
 	var toInfisical bool
 	var ienv, path, projectID, token, only string
 	fs.BoolVar(&toInfisical, "to-infisical", false, "цель — Infisical (через их CLI)")
-	fs.StringVar(&ienv, "infisical-env", "", "Infisical: окружение (умолч. — значение -e, иначе dev)")
+	fs.StringVar(&ienv, "infisical-env", "", "Infisical: окружение (умолч. — профиль адреса, иначе dev)")
 	fs.StringVar(&path, "path", "/", "Infisical: путь к папке секретов")
 	fs.StringVar(&projectID, "projectId", "", "Infisical: id проекта (иначе из .infisical.json в текущей папке)")
 	fs.StringVar(&token, "token", "", "Infisical: сервис-токен/идентификатор (иначе текущий логин)")
 	fs.StringVar(&only, "only", "", "отправить только эти ключи (через запятую)")
-	getEnv := addEnvFlag(fs)
 	_ = fs.Parse(rest)
 	if !toInfisical {
-		die("укажи цель: sec push <proj> --to-infisical [-e commercial --infisical-env prod]")
+		die("укажи цель: sec push <proj>[@профиль] --to-infisical [--infisical-env prod]")
 	}
-	sp, secEnv := resolveServiceProj(service, fs, getEnv())
+	sp, secProfile := resolveServiceProj(service, fs)
 	if ienv == "" {
-		if ienv = secEnv; ienv == "" {
+		if ienv = secProfile; ienv == "" {
 			ienv = "dev"
 		}
 	}
@@ -65,7 +64,7 @@ func pushCommand(args []string) int {
 
 	// push — миграция в командный источник истины, не env-инъекция: текстовые
 	// файловые (kind: file) уходят как есть, ARG_MAX здесь ни при чём
-	kv := selectKeys(keys, only, sp, true)
+	kv := selectKeys(keys, only, st.DisplayProj(sp), true)
 
 	if err := infisical.Push(infisical.Ref{Env: ienv, Path: path, ProjectID: projectID, Token: token}, kv); err != nil {
 		die("%v", err)

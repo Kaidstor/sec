@@ -39,8 +39,8 @@ func TestRedactReplacesValues(t *testing.T) {
 	if !strings.Contains(out, "[redacted:whois/API_TOKEN]") {
 		t.Errorf("нет плейсхолдера токена: %q", out)
 	}
-	if !strings.Contains(out, "[redacted:db/PASSWORD@prod]") {
-		t.Errorf("нет плейсхолдера с инстансом: %q", out)
+	if !strings.Contains(out, "[redacted:db@prod/PASSWORD]") {
+		t.Errorf("нет плейсхолдера с профилем: %q", out)
 	}
 	if !hit["whois/API_TOKEN"] || !hit["db@prod/PASSWORD"] {
 		t.Errorf("не отмечены найденные ключи: %v", hit)

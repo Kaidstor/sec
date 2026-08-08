@@ -107,8 +107,7 @@ export function isBinaryEntry(entry: SecretEntry): boolean {
 
 // Команда для терминала: единственный способ достать бинарный секрет — в файл.
 export function getOutCommand(project: string, key: string): string {
-  const { service, env } = splitProject(project);
-  return `sec get ${service}/${key} --out <файл>${env ? ` -e ${env}` : ""}`;
+  return `sec get ${project}/${key} --out <файл>`;
 }
 
 export type SecretStore = Record<string, SecretEntry[]>;
@@ -120,25 +119,23 @@ export interface HistoryVersion {
   updatedAt: string;
 }
 
-// --- адресация: внутренний проект "service@env" → service + флаг -e ---
+// --- адресация: внутренний проект "service@profile" совпадает с CLI-формой,
+// в argv он уходит как есть; splitProject остаётся для отображения ---
 
 export interface ProjectRef {
   service: string;
-  env?: string;
+  profile?: string;
 }
 
 export function splitProject(project: string): ProjectRef {
   const at = project.indexOf("@");
   if (at === -1) return { service: project };
-  return { service: project.slice(0, at), env: project.slice(at + 1) };
+  return { service: project.slice(0, at), profile: project.slice(at + 1) };
 }
 
-// Собирает argv команды над одним ключом: сервис/KEY + -e для инстанса.
+// Собирает argv команды над одним ключом: project[@profile]/KEY.
 export function keyArgs(cmd: string, project: string, key: string, ...extra: string[]): string[] {
-  const { service, env } = splitProject(project);
-  const args = [cmd, `${service}/${key}`, ...extra];
-  if (env) args.push("-e", env);
-  return args;
+  return [cmd, `${project}/${key}`, ...extra];
 }
 
 export async function listSecrets(): Promise<SecretStore> {
