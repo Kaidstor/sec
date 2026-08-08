@@ -186,7 +186,7 @@ func lsCommand(args []string) int {
 	sp := store.ProjKey(service, profile)
 	eff := st.EffectiveKeys(sp)
 	if len(eff) == 0 {
-		die("проект %q пуст или не существует (sec ls)", sp)
+		dieNotFound("проект %q пуст или не существует (sec ls)", sp)
 	}
 	if parents := st.Extends[sp]; len(parents) > 0 {
 		labels := make([]string, len(parents))
@@ -355,7 +355,7 @@ func runCommand(args []string) int {
 	}
 	keys := st.EffectiveKeys(proj) // собственные + унаследованные, ссылки разрешены
 	if len(keys) == 0 && len(mounts) == 0 {
-		die("проект %q пуст или не существует (sec ls)", proj)
+		dieNotFound("проект %q пуст или не существует (sec ls)", proj)
 	}
 	for _, m := range mounts {
 		if m.proj == proj {
@@ -454,7 +454,7 @@ func exportCommand(args []string) int {
 	}
 	keys := st.EffectiveKeys(proj) // собственные + унаследованные, ссылки разрешены
 	if len(keys) == 0 {
-		die("проект %q пуст или не существует (sec ls)", proj)
+		dieNotFound("проект %q пуст или не существует (sec ls)", proj)
 	}
 
 	var b strings.Builder

@@ -50,10 +50,10 @@ func diffCommand(args []string) int {
 	}
 	a, b := st.EffectiveKeys(pa), st.EffectiveKeys(pb) // ссылки/наследование сравниваем по эффективным значениям
 	if len(a) == 0 {
-		die("проект %q пуст или не существует", pa)
+		dieNotFound("проект %q пуст или не существует", pa)
 	}
 	if len(b) == 0 {
-		die("проект %q пуст или не существует", pb)
+		dieNotFound("проект %q пуст или не существует", pb)
 	}
 
 	seen := map[string]bool{}
@@ -167,7 +167,7 @@ func verifyCommand(args []string) int {
 	}
 	sec, _, _, ok := st.Lookup(proj, key)
 	if !ok {
-		die("нет %s/%s", proj, key)
+		dieNotFound("нет %s/%s", proj, key)
 	}
 
 	var cand string

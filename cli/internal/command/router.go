@@ -28,6 +28,14 @@ func die(format string, a ...any) {
 	os.Exit(2)
 }
 
+// dieNotFound — «адресата нет» (ключ/проект): отдельный код выхода 3, чтобы
+// обёртки (GUI, secretspec-провайдер) отличали отсутствие секрета от настоящей
+// ошибки (нечитаемый стор, битая ссылка) без разбора русских сообщений stderr.
+func dieNotFound(format string, a ...any) {
+	fmt.Fprintf(os.Stderr, "sec: "+format+"\n", a...)
+	os.Exit(3)
+}
+
 // cwdProject — проект по умолчанию: имя текущей директории.
 func cwdProject() string {
 	wd, err := os.Getwd()
@@ -200,7 +208,7 @@ func collectPositionals(fs *flag.FlagSet, args []string) []string {
 func mustSecret(st *store.Store, proj, key string) store.Secret {
 	sec, ok := st.Projects[proj][key]
 	if !ok {
-		die("нет %s/%s", proj, key)
+		dieNotFound("нет %s/%s", proj, key)
 	}
 	return sec
 }

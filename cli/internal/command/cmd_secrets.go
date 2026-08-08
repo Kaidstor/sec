@@ -320,7 +320,7 @@ func getCommand(args []string) int {
 		if org == store.OriginRef {
 			die("%s/%s ссылается на %s, но значения по цепочке нет (родитель удалён?)", proj, key, source)
 		}
-		die("нет %s/%s (смотри: sec ls %s)", proj, key, proj)
+		dieNotFound("нет %s/%s (смотри: sec ls %s)", proj, key, proj)
 	}
 	val, enc := sec.Value, sec.Enc
 	detail := "показано"
@@ -394,7 +394,7 @@ func getCommand(args []string) int {
 			die("%v", err)
 		}
 		if _, ok := st2.Projects[proj][key]; !ok {
-			die("нет %s/%s", proj, key)
+			dieNotFound("нет %s/%s", proj, key)
 		}
 		if refs := st2.Referrers(proj + "/" + key); len(refs) > 0 {
 			fmt.Fprintf(os.Stderr, "sec: ВНИМАНИЕ: на %s/%s ссылаются %s — после --once удаления ссылки станут битыми\n", proj, key, strings.Join(refs, ", "))
@@ -480,7 +480,7 @@ func historyCommand(args []string) int {
 	}
 	sec, org, source, ok := st.Lookup(proj, key)
 	if !ok {
-		die("нет %s/%s", proj, key)
+		dieNotFound("нет %s/%s", proj, key)
 	}
 	if org != store.OriginOwn && !asJSON {
 		fmt.Printf("%s/%s — значение из %s (по ссылке/наследованию), история ниже — родителя\n", proj, key, source)
@@ -689,7 +689,7 @@ func rmCommand(args []string) int {
 		sp := resolveProj(ref)
 		n := len(st.Projects[sp])
 		if n == 0 {
-			die("проекта %q нет", sp)
+			dieNotFound("проекта %q нет", sp)
 		}
 		if refs := st.ProjectReferrers(sp); len(refs) > 0 {
 			fmt.Fprintf(os.Stderr, "sec: ВНИМАНИЕ: на ключи %s ссылаются %s — после удаления ссылки станут битыми\n", sp, strings.Join(refs, ", "))
@@ -737,7 +737,7 @@ func otpCommand(args []string) int {
 	}
 	sec, _, _, ok := st.Lookup(proj, key)
 	if !ok {
-		die("нет %s/%s", proj, key)
+		dieNotFound("нет %s/%s", proj, key)
 	}
 	if totp.IsHOTP(sec.Value) {
 		return hotpAdvance(proj, key, clip)
@@ -772,7 +772,7 @@ func hotpAdvance(proj, key string, clip bool) int {
 	}
 	sec, _, source, ok := st.Lookup(proj, key)
 	if !ok {
-		die("нет %s/%s", proj, key)
+		dieNotFound("нет %s/%s", proj, key)
 	}
 	code, next, counter, err := totp.HOTPCode(sec.Value)
 	if err != nil {

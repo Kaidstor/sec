@@ -59,7 +59,7 @@ func pushCommand(args []string) int {
 	}
 	keys := st.EffectiveKeys(sp) // собственные + унаследованные, ссылки разрешены
 	if len(keys) == 0 {
-		die("проект %q пуст или не существует (sec ls)", sp)
+		dieNotFound("проект %q пуст или не существует (sec ls)", sp)
 	}
 
 	// push — миграция в командный источник истины, не env-инъекция: текстовые

@@ -153,7 +153,7 @@ func oneLine(v string) string {
 func envKeysOf(st *store.Store, proj, only string) map[string]store.Secret {
 	keys := st.EffectiveKeys(proj) // собственные + унаследованные, ссылки разрешены
 	if len(keys) == 0 {
-		die("проект %q пуст или не существует (sec ls)", proj)
+		dieNotFound("проект %q пуст или не существует (sec ls)", proj)
 	}
 	if only != "" {
 		want := map[string]bool{}

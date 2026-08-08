@@ -106,7 +106,7 @@ func metaCommand(args []string) int {
 		}
 		sec, _, source, found := st.Lookup(proj, key) // унаследованный — мета родителя
 		if !found {
-			die("нет %s/%s", proj, key)
+			dieNotFound("нет %s/%s", proj, key)
 		}
 		if !asJSON {
 			fmt.Printf("%s/%s: метаданные наследуются из %s\n", proj, key, source)

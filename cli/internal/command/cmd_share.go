@@ -135,7 +135,7 @@ func shareCreateCommand(args []string) int {
 		proj, _ := resolveServiceProj(ref, fs)
 		keys := st.EffectiveKeys(proj)
 		if len(keys) == 0 {
-			die("в проекте %s нет ключей (смотри: sec ls)", proj)
+			dieNotFound("в проекте %s нет ключей (смотри: sec ls)", proj)
 		}
 		entries, perr := packEntries(keys, only)
 		if perr != nil {
@@ -211,7 +211,7 @@ func shareCreateCommand(args []string) int {
 			if org == store.OriginRef {
 				die("%s/%s ссылается на %s, но значения по цепочке нет (родитель удалён?)", proj, key, source)
 			}
-			die("нет %s/%s (смотри: sec ls %s)", proj, key, proj)
+			dieNotFound("нет %s/%s (смотри: sec ls %s)", proj, key, proj)
 		}
 		raw, berr := sec.Bytes()
 		if berr != nil {
