@@ -1,7 +1,7 @@
 import { getVersion } from "@tauri-apps/api/app";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { ArrowDown, ArrowUp, Check, CheckCircle2, Copy, Redo2, Undo2, X } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { CSSProperties, useCallback, useEffect, useState } from "react";
 import {
   HistoryVersion,
   SecretEntry,
@@ -15,11 +15,12 @@ import {
   shareKey,
   shareLinks,
   sharePack,
+  shareValue,
 } from "../../lib/sec";
 import { THEMES, Theme } from "../../lib/themes";
 import { useUpdater } from "../../lib/updater";
 import { useApp } from "../../store";
-import { Button, Dialog, Field, Select, cn } from "../ui";
+import { Button, Dialog, Field, Select, Textarea, cn } from "../ui";
 
 export function HistoryDialog({ project, entry }: { project: string; entry: SecretEntry }) {
   const { openDialog, showToast, refresh } = useApp();
@@ -91,6 +92,107 @@ export function HistoryDialog({ project, entry }: { project: string; entry: Secr
   );
 }
 
+function ShareResultView({ result, onClose }: { result: ShareResult; onClose: () => void }) {
+  const { showToast } = useApp();
+  return (
+    <Dialog title="Ссылка создана" onClose={onClose} wide>
+      <div className="flex flex-col gap-3">
+        <div className="selectable break-all rounded-md border border-zinc-700 bg-zinc-925 p-2.5 font-mono text-[12px] text-sky-400">
+          {result.url}
+        </div>
+        <div className="text-[11px] text-zinc-500">{result.note || "Ссылка скопирована в буфер."} Скопирована в буфер.</div>
+        <div className="text-[11px] text-zinc-600">
+          URL печатать можно — это цель передачи; значение зашифровано локально, сервер видит только шифротекст, ключ расшифровки — во
+          фрагменте после #.
+        </div>
+        <div className="flex justify-end gap-2">
+          <Button onClick={() => writeText(result.url).then(() => showToast("Ссылка в буфере", "info"))}>
+            <Copy size={13} /> Скопировать ещё раз
+          </Button>
+          <Button variant="primary" onClick={onClose}>
+            Готово
+          </Button>
+        </div>
+      </div>
+    </Dialog>
+  );
+}
+
+// Поделиться значением «в моменте»: мимо стора, в sec ничего не сохраняется —
+// значение сразу уезжает шифроблобом на share-сервер (share -).
+export function ShareValueDialog() {
+  const { openDialog, showToast } = useApp();
+  const [value, setValue] = useState("");
+  const [reveal, setReveal] = useState(false);
+  const [ttl, setTtl] = useState("24h");
+  const [multi, setMulti] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<ShareResult | null>(null);
+  const close = () => openDialog(null);
+
+  const create = async () => {
+    if (!value.trim()) return showToast("Пустое значение");
+    setBusy(true);
+    try {
+      const res = await shareValue(value, ttl, multi);
+      setResult(res);
+      await writeText(res.url);
+    } catch (err) {
+      showToast(String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (result) {
+    return <ShareResultView result={result} onClose={close} />;
+  }
+
+  return (
+    <Dialog title="Поделиться значением" onClose={close}>
+      <div className="flex flex-col gap-3">
+        <Field label="Значение">
+          <Textarea
+            autoFocus
+            rows={4}
+            placeholder="вставь секрет — в стор он не попадёт"
+            // нестандартное свойство WebKit: маскирует текст в textarea
+            style={reveal ? undefined : ({ WebkitTextSecurity: "disc" } as CSSProperties)}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+          />
+        </Field>
+        <div className="flex items-end gap-3">
+          <Field label="Срок жизни" className="w-28">
+            <Select className="w-full" value={ttl} onChange={(e) => setTtl(e.target.value)}>
+              {TTL_OPTIONS.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <label className="flex items-center gap-1.5 pb-1 text-[12px] text-zinc-300" title="Умолчание — одноразовая: сгорает при первом открытии">
+            <input type="checkbox" checked={multi} onChange={(e) => setMulti(e.target.checked)} /> многоразовая
+          </label>
+          <label className="flex items-center gap-1.5 pb-1 text-[12px] text-zinc-300">
+            <input type="checkbox" checked={reveal} onChange={(e) => setReveal(e.target.checked)} /> показать
+          </label>
+        </div>
+        <div className="text-[11px] text-zinc-600">
+          Значение не сохраняется в sec: оно шифруется локально и живёт только на share-сервере до сгорания ссылки.
+        </div>
+        <div className="flex justify-end gap-2">
+          <Button onClick={close}>Отмена</Button>
+          <Button variant="primary" disabled={busy} onClick={create}>
+            Создать ссылку
+          </Button>
+        </div>
+      </div>
+    </Dialog>
+  );
+}
+
 // Один диалог на оба вида ссылок: key задан — одиночный секрет, нет — пак
 // проекта (все ключи или выбранные, --all/--only).
 export function ShareDialog({ project, secretKey }: { project: string; secretKey?: string }) {
@@ -137,28 +239,7 @@ export function ShareDialog({ project, secretKey }: { project: string; secretKey
   };
 
   if (result) {
-    return (
-      <Dialog title="Ссылка создана" onClose={close} wide>
-        <div className="flex flex-col gap-3">
-          <div className="selectable break-all rounded-md border border-zinc-700 bg-zinc-925 p-2.5 font-mono text-[12px] text-sky-400">
-            {result.url}
-          </div>
-          <div className="text-[11px] text-zinc-500">{result.note || "Ссылка скопирована в буфер."} Скопирована в буфер.</div>
-          <div className="text-[11px] text-zinc-600">
-            URL печатать можно — это цель передачи; значение зашифровано локально, сервер видит только шифротекст, ключ расшифровки — во
-            фрагменте после #.
-          </div>
-          <div className="flex justify-end gap-2">
-            <Button onClick={() => writeText(result.url).then(() => showToast("Ссылка в буфере", "info"))}>
-              <Copy size={13} /> Скопировать ещё раз
-            </Button>
-            <Button variant="primary" onClick={close}>
-              Готово
-            </Button>
-          </div>
-        </div>
-      </Dialog>
-    );
+    return <ShareResultView result={result} onClose={close} />;
   }
 
   return (

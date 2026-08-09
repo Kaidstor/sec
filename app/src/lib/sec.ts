@@ -115,6 +115,15 @@ export async function shareKey(
   return { url: out.stdout.trim(), note: cleanStderr(out.stderr) };
 }
 
+// Ссылка на произвольное значение мимо стора (share -): значение уходит на
+// share-сервер шифроблобом и в sec не сохраняется.
+export async function shareValue(value: string, ttl: string, multi: boolean): Promise<ShareResult> {
+  const args = ["share", "-", "--ttl", ttl, "--no-clip"];
+  if (multi) args.push("--multi");
+  const out = await runSecFull(args, value);
+  return { url: out.stdout.trim(), note: cleanStderr(out.stderr) };
+}
+
 // Пак: весь проект (--all) или выбранные ключи (--only).
 export async function sharePack(
   project: string,

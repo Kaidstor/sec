@@ -10,6 +10,7 @@ export type Dialog =
   | { type: "edit"; project: string; entry: SecretEntry }
   | { type: "history"; project: string; entry: SecretEntry }
   | { type: "share"; project: string; key?: string }
+  | { type: "share-value" }
   | { type: "links" }
   | { type: "settings" }
   | null;

@@ -1,11 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
-import { Link2, Plus, Search, Settings, Zap } from "lucide-react";
+import { Link2, Plus, Search, Send, Settings, Zap } from "lucide-react";
 import { useEffect } from "react";
 import { SecretList } from "./components/SecretList";
 import { UpdateToast } from "./components/UpdateToast";
 import { WhatsNewDialog } from "./components/WhatsNewDialog";
 import { AddSecretDialog, EditSecretDialog, GenerateSecretDialog } from "./components/dialogs/forms";
-import { HistoryDialog, LinksDialog, SettingsDialog, ShareDialog } from "./components/dialogs/panels";
+import { HistoryDialog, LinksDialog, SettingsDialog, ShareDialog, ShareValueDialog } from "./components/dialogs/panels";
 import { ConfirmDialog, IconButton, RefreshButton, cn } from "./components/ui";
 import { isKey } from "./lib/keys";
 import { initUpdater } from "./lib/updater";
@@ -96,6 +96,9 @@ export default function App() {
           <IconButton title="Сгенерировать секрет" onClick={() => openDialog({ type: "generate" })}>
             <Zap size={13} />
           </IconButton>
+          <IconButton title="Поделиться значением — одноразовая ссылка, мимо стора" onClick={() => openDialog({ type: "share-value" })}>
+            <Send size={13} />
+          </IconButton>
           <IconButton title="Активные share-ссылки" onClick={() => openDialog({ type: "links" })}>
             <Link2 size={13} />
           </IconButton>
@@ -133,6 +136,7 @@ export default function App() {
       {dialog?.type === "edit" && <EditSecretDialog project={dialog.project} entry={dialog.entry} />}
       {dialog?.type === "history" && <HistoryDialog project={dialog.project} entry={dialog.entry} />}
       {dialog?.type === "share" && <ShareDialog project={dialog.project} secretKey={dialog.key} />}
+      {dialog?.type === "share-value" && <ShareValueDialog />}
       {dialog?.type === "links" && <LinksDialog />}
       {dialog?.type === "settings" && <SettingsDialog />}
       <ConfirmDialog />
