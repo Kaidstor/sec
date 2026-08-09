@@ -136,6 +136,43 @@ fn relaunch_app(app: tauri::AppHandle) {
     app.restart();
 }
 
+/// Пункт «sec» в menu-bar: ЛКМ — показать окно, ПКМ — меню (Открыть/Выйти).
+#[cfg(target_os = "macos")]
+fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
+    use tauri::menu::{Menu, MenuItem};
+    use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+
+    let show = MenuItem::with_id(app, "show", "Открыть sec", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "Выйти", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&show, &quit])?;
+    TrayIconBuilder::with_id("main")
+        // template-иконка обязана быть чёрной с альфой: цвет задаёт сама
+        // macOS под тему; цветная картинка станет сплошным силуэтом
+        .icon(tauri::include_image!("icons/tray.png"))
+        .icon_as_template(true)
+        .menu(&menu)
+        // ЛКМ открывает окно только пока меню на ЛКМ выключено: с
+        // show_menu_on_left_click(true) Click-событие не приходит
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "show" => reveal_window(app),
+            "quit" => app.exit(0),
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                reveal_window(tray.app_handle());
+            }
+        })
+        .build(app)?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -152,6 +189,8 @@ pub fn run() {
                 .build(),
         )
         .setup(|app| {
+            #[cfg(target_os = "macos")]
+            setup_tray(app)?;
             // страховка: если фронтенд не показал окно (JS-ошибка, зависшая
             // загрузка), показать его самим, чтобы не осталось невидимым
             let handle = app.handle().clone();
@@ -166,6 +205,29 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![run_sec, reveal_main_window, relaunch_app])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                // macOS: крестик прячет окно и убирает приложение из Dock
+                // (Accessory), процесс живёт в menu-bar. Выход — из меню трея;
+                // Cmd+Q у скрытого Accessory-приложения недоступен.
+                #[cfg(target_os = "macos")]
+                {
+                    api.prevent_close();
+                    let _ = window.hide();
+                    let _ = window
+                        .app_handle()
+                        .set_activation_policy(tauri::ActivationPolicy::Accessory);
+                }
+                #[cfg(not(target_os = "macos"))]
+                let _ = (window, api);
+            }
+        })
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        .run(|_app, _event| {
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = _event {
+                reveal_window(_app);
+            }
+        });
 }
