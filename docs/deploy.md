@@ -1,4 +1,10 @@
-# Сверка и применение env на хосте: `sec diff` и `sec deploy`
+---
+type: reference
+title: "Сверка и применение env на хосте: `sec diff` и `sec deploy`"
+description: Почему sec deploy применяет стор мержем, пишет файл на месте под sudo и сверяет отпечатки ключей до рестарта сервиса.
+tags: [sec, deploy, env, cli]
+generated: { by: "process:okf-migration", at: "2026-08-05T05:18:14Z" }
+---
 
 Заметка о том, почему `deploy` устроен именно так. Список флагов — в
 `sec deploy --help`.

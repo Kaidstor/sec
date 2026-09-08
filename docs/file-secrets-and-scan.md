@@ -1,8 +1,11 @@
 ---
 url: https://notes.kaidstor.ru/91930e46-fe4b-4ca9-a58f-70432f409bdc
 uuid: 91930e46-fe4b-4ca9-a58f-70432f409bdc
+type: report
 title: "sec: файловые секреты, шум scan и порог --min"
-tags: sec, cli, секреты, scan
+description: Что кладётся в переменную при run --file, зачем нужна форма --file ENV=KEY и почему scan шумит на конфигурации, попавшей в стор через import.
+tags: [sec, cli, секреты, scan]
+generated: { by: "process:okf-migration", at: "2026-08-05T05:17:17Z" }
 ---
 
 Три места в sec, где поведение выглядит неожиданным, пока не знаешь механики.
