@@ -1,8 +1,11 @@
 ---
 url: https://notes.kaidstor.ru/6982ea92-d6d2-4183-baf4-37d9c8e3acd5
 uuid: 6982ea92-d6d2-4183-baf4-37d9c8e3acd5
-title: sec share — как устроены одноразовые ссылки
-tags: sec, share, zero-knowledge, крипто
+type: reference
+title: "sec share — как устроены одноразовые ссылки"
+description: Как устроена передача секрета одноразовой ссылкой от локального шифрования AES-256-GCM и ключа во фрагменте URL до атомарного забора записи на сервере.
+tags: [sec, share, zero-knowledge, крипто]
+generated: { by: "process:okf-migration", at: "2026-08-05T10:28:29Z" }
 ---
 
 Передать коллеге пароль от базы — обыденная задача с неприятным свойством: любой
