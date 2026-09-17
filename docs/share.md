@@ -23,7 +23,7 @@ self-hosted: поднять свой — один Go-бинарь без зав�
 Ссылка выглядит так:
 
 ```
-https://share.kaidstor.ru/s/77dUJZuC9or7MDvIGfx1as#uKEOfa8-3TKVlM7EtxdYCq5hP3n5VCGkJ9oS5G1fcqo
+https://share.kaidstor.ru/s/ExampleId0ExampleId012#ExampleKeyExampleKeyExampleKeyExampleKey123
                             └──────── id ────────┘ └────────────── ключ ──────────────────────┘
 ```
 
