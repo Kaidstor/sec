@@ -1,5 +1,8 @@
 import {
+  AtSign,
   Clock,
+  Copy,
+  Dices,
   Eye,
   FileText,
   History,
@@ -8,9 +11,9 @@ import {
   Lock,
   Pencil,
   Plus,
-  Share2,
+  Share,
+  Timer,
   Trash2,
-  Zap,
 } from "lucide-react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import {
@@ -22,7 +25,7 @@ import {
   splitProject,
 } from "../lib/sec";
 import { useApp } from "../store";
-import { IconButton, cn } from "./ui";
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger, IconButton, cn } from "./ui";
 
 const KIND_COLOR: Record<string, string> = {
   password: "border-amber-500/40 bg-amber-500/10 text-amber-400",
@@ -86,7 +89,7 @@ export function SecretList() {
         <ProjectSection key={project} project={project} entries={entries} />
       ))}
       <div className="px-4 pt-3 text-[11px] text-zinc-600">
-        Клик по строке кладёт значение в буфер (через sec, приложение его не видит).
+        Клик по строке кладёт значение в буфер (через sec, приложение его не видит). Правый клик — все действия.
       </div>
     </div>
   );
@@ -108,10 +111,10 @@ export function SecretList() {
               <Plus size={12} />
             </IconButton>
             <IconButton title={`Сгенерировать секрет в «${project}»`} onClick={() => openDialog({ type: "generate", project })}>
-              <Zap size={12} />
+              <Dices size={12} />
             </IconButton>
             <IconButton title="Поделиться паком (ссылка на весь проект)" onClick={() => openDialog({ type: "share", project })}>
-              <Share2 size={12} />
+              <Share size={12} />
             </IconButton>
           </span>
         </div>
@@ -158,6 +161,18 @@ function SecretRow({ project, entry }: { project: string; entry: SecretEntry }) 
     }
   };
 
+  const copyRef = async () => {
+    try {
+      await writeText(ref);
+      showToast(`${ref} — путь в буфере`, "success");
+    } catch (err) {
+      showToast(String(err));
+    }
+  };
+
+  const share = () => openDialog({ type: "share", project, key: entry.key });
+  const edit = () => openDialog({ type: "edit", project, entry });
+
   const remove = async () => {
     const ok = await askConfirm({
       title: `Удалить ${ref}?`,
@@ -176,66 +191,87 @@ function SecretRow({ project, entry }: { project: string; entry: SecretEntry }) 
   };
 
   return (
-    <div
-      className="group flex h-8 cursor-default items-center gap-2 border-b border-zinc-900 px-4 hover:bg-zinc-900"
-      onClick={() => copyValue()}
-      title={isBinary ? "Клик — скопировать команду выгрузки" : "Клик — скопировать значение в буфер"}
-    >
-      {isBinary ? (
-        <FileText size={13} className="shrink-0 text-zinc-500" />
-      ) : isTotp ? (
-        <Clock size={13} className="shrink-0 text-emerald-500" />
-      ) : (
-        <Key size={13} className="shrink-0 text-zinc-500" />
-      )}
-      <span className="shrink-0 font-mono text-[12px] text-zinc-100">{entry.key}</span>
-      {entry.ref && (
-        <span title={`ссылка на ${entry.ref}`}>
-          <Link2 size={11} className="shrink-0 text-sky-500" />
-        </span>
-      )}
-      {entry.meta?.note && <span className="truncate text-[11px] text-zinc-500">{entry.meta.note}</span>}
+    <ContextMenu>
+      <ContextMenuTrigger
+        className="group flex h-8 cursor-default items-center gap-2 border-b border-zinc-900 px-4 hover:bg-zinc-900"
+        onClick={() => copyValue()}
+        title={isBinary ? "Клик — скопировать команду выгрузки" : "Клик — скопировать значение в буфер"}
+      >
+        {isBinary ? (
+          <FileText size={13} className="shrink-0 text-zinc-500" />
+        ) : isTotp ? (
+          <Clock size={13} className="shrink-0 text-emerald-500" />
+        ) : (
+          <Key size={13} className="shrink-0 text-zinc-500" />
+        )}
+        <span className="shrink-0 font-mono text-[12px] text-zinc-100">{entry.key}</span>
+        {entry.ref && (
+          <span title={`ссылка на ${entry.ref}`}>
+            <Link2 size={11} className="shrink-0 text-sky-500" />
+          </span>
+        )}
+        {entry.meta?.note && <span className="truncate text-[11px] text-zinc-500">{entry.meta.note}</span>}
 
-      <span className="ml-auto flex shrink-0 items-center gap-2">
-        <span className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100" onClick={(e) => e.stopPropagation()}>
-          {!isBinary && !isTotp && (
-            <IconButton title="Скопировать с очисткой буфера через 60с" onClick={() => copyValue(["--clear-after", "60s"])}>
-              <Clock size={12} />
+        <span className="ml-auto flex shrink-0 items-center gap-2">
+          <span className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100" onClick={(e) => e.stopPropagation()}>
+            <IconButton title="Поделиться ссылкой" onClick={share}>
+              <Share size={12} />
             </IconButton>
+            <IconButton title="Редактировать" onClick={edit}>
+              <Pencil size={12} />
+            </IconButton>
+            <IconButton title="Удалить" className="hover:text-red-400" onClick={remove}>
+              <Trash2 size={12} />
+            </IconButton>
+          </span>
+          {kind && (
+            <span className={cn("rounded border px-1 py-px text-[9px] font-semibold", KIND_COLOR[kind] ?? "border-zinc-600 text-zinc-400")}>
+              {kind}
+            </span>
           )}
-          <IconButton title="Маска значения (peek)" onClick={peek}>
-            <Eye size={12} />
-          </IconButton>
-          <IconButton title="Поделиться ссылкой" onClick={() => openDialog({ type: "share", project, key: entry.key })}>
-            <Share2 size={12} />
-          </IconButton>
-          <IconButton title="Редактировать" onClick={() => openDialog({ type: "edit", project, entry })}>
-            <Pencil size={12} />
-          </IconButton>
-          <IconButton title="История версий" onClick={() => openDialog({ type: "history", project, entry })}>
-            <History size={12} />
-          </IconButton>
-          <IconButton title="Удалить" className="hover:text-red-400" onClick={remove}>
-            <Trash2 size={12} />
-          </IconButton>
-        </span>
-        {kind && (
-          <span className={cn("rounded border px-1 py-px text-[9px] font-semibold", KIND_COLOR[kind] ?? "border-zinc-600 text-zinc-400")}>
-            {kind}
+          {entry.history > 0 && (
+            <span className="text-[10px] text-zinc-600" title="версий в истории">
+              +{entry.history}
+            </span>
+          )}
+          <span className="w-14 text-right text-[10px] text-zinc-600">
+            {isBinary ? `${entry.chars} Б` : `${entry.chars} симв.`}
           </span>
-        )}
-        {entry.history > 0 && (
-          <span className="text-[10px] text-zinc-600" title="версий в истории">
-            +{entry.history}
+          <span className="w-16 text-right text-[10px] text-zinc-600" title={`обновлён ${entry.updatedAt}`}>
+            {new Date(entry.updatedAt).toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit", year: "2-digit" })}
           </span>
+        </span>
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuItem icon={Copy} onClick={() => copyValue()}>
+          {isBinary ? "Скопировать команду выгрузки" : isTotp ? "Скопировать код" : "Скопировать значение"}
+        </ContextMenuItem>
+        {!isBinary && !isTotp && (
+          <ContextMenuItem icon={Timer} onClick={() => copyValue(["--clear-after", "60s"])}>
+            Скопировать с очисткой буфера через 60с
+          </ContextMenuItem>
         )}
-        <span className="w-14 text-right text-[10px] text-zinc-600">
-          {isBinary ? `${entry.chars} Б` : `${entry.chars} симв.`}
-        </span>
-        <span className="w-16 text-right text-[10px] text-zinc-600" title={`обновлён ${entry.updatedAt}`}>
-          {new Date(entry.updatedAt).toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit", year: "2-digit" })}
-        </span>
-      </span>
-    </div>
+        <ContextMenuItem icon={AtSign} onClick={copyRef}>
+          Скопировать путь {ref}
+        </ContextMenuItem>
+        <ContextMenuItem icon={Eye} onClick={peek}>
+          Маска значения (peek)
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem icon={Share} onClick={share}>
+          Поделиться ссылкой
+        </ContextMenuItem>
+        <ContextMenuItem icon={Pencil} onClick={edit}>
+          Редактировать
+        </ContextMenuItem>
+        <ContextMenuItem icon={History} onClick={() => openDialog({ type: "history", project, entry })}>
+          История версий
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem icon={Trash2} iconClassName="text-red-400" className="text-red-400" onClick={remove}>
+          Удалить
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
   );
 }

@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { Link2, Plus, Search, Send, Settings, Zap } from "lucide-react";
+import { Dices, Link2, Plus, Search, Send, Settings } from "lucide-react";
 import { useEffect } from "react";
 import { SecretList } from "./components/SecretList";
 import { UpdateToast } from "./components/UpdateToast";
@@ -94,7 +94,7 @@ export default function App() {
             <Plus size={14} />
           </IconButton>
           <IconButton title="Сгенерировать секрет" onClick={() => openDialog({ type: "generate" })}>
-            <Zap size={13} />
+            <Dices size={13} />
           </IconButton>
           <IconButton title="Поделиться значением — одноразовая ссылка, мимо стора" onClick={() => openDialog({ type: "share-value" })}>
             <Send size={13} />
