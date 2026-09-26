@@ -16,7 +16,6 @@ package command
 import (
 	"github.com/kaidstor/sec/internal/store"
 
-	"flag"
 	"fmt"
 	"os"
 	"strings"
@@ -104,7 +103,7 @@ func secDefaultProfile(service string) string {
 
 func checkCommand(args []string) int {
 	proj, rest := splitArgs(args)
-	fs := flag.NewFlagSet("check", flag.ExitOnError)
+	fs := newFlagSet("check")
 	var file string
 	var allProfiles bool
 	fs.StringVar(&file, "file", ".sec", "манифест требуемых ключей")
@@ -116,11 +115,11 @@ func checkCommand(args []string) int {
 
 	data, err := os.ReadFile(file)
 	if err != nil {
-		die("чтение %s: %v (создай список требуемых ключей, по одному на строку)", file, err)
+		dieK(kindIO, "чтение %s: %v (создай список требуемых ключей, по одному на строку)", file, err)
 	}
 	cfg, warns := parseSecFile(string(data))
 	for _, w := range warns {
-		fmt.Fprintf(os.Stderr, "sec: %s: %s\n", file, w)
+		warnf("%s: %s", file, w)
 	}
 	// сервис: из аргумента (может нести @profile), иначе из .sec project,
 	// иначе имя папки
@@ -147,14 +146,20 @@ func checkCommand(args []string) int {
 
 	st, _, _, err := store.Open(false)
 	if err != nil {
-		die("%v", err)
+		dieStore(err)
 	}
 	missingTotal := 0
+	type result struct {
+		Project string   `json:"project"`
+		Total   int      `json:"total"`
+		Missing []string `json:"missing"`
+	}
+	results := []result{}
 	for _, prof := range profiles {
 		checkProfile(prof)
 		sp := store.ProjKey(service, prof)
 		keys := st.Projects[sp]
-		var missing []string
+		missing := []string{}
 		for _, k := range cfg.Keys {
 			if strings.IndexByte(k, '/') >= 0 { // допускаем proj/KEY в списке
 				continue
@@ -163,13 +168,15 @@ func checkCommand(args []string) int {
 				missing = append(missing, k)
 			}
 		}
+		results = append(results, result{sp, len(cfg.Keys), missing})
 		if len(missing) == 0 {
-			fmt.Printf("%s: все ключи на месте (%d)\n", sp, len(cfg.Keys))
+			fmt.Fprintf(stdout, "%s: все ключи на месте (%d)\n", sp, len(cfg.Keys))
 		} else {
 			missingTotal += len(missing)
-			fmt.Printf("%s: не хватает %d из %d — %s\n", sp, len(missing), len(cfg.Keys), strings.Join(missing, ", "))
+			fmt.Fprintf(stdout, "%s: не хватает %d из %d — %s\n", sp, len(missing), len(cfg.Keys), strings.Join(missing, ", "))
 		}
 	}
+	emit(map[string]any{"file": file, "results": results, "missing": missingTotal})
 	if missingTotal > 0 {
 		return 2
 	}

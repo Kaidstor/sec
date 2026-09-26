@@ -3,7 +3,6 @@ package share
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -68,24 +67,32 @@ func (c *Client) do(method, path string, body, out any) error {
 	return nil
 }
 
+// StatusError — сервер ответил HTTP-ошибкой; Code нужен CLI, чтобы отличить
+// отвергнутый токен (auth) от прочих отказов сервера (api).
+type StatusError struct {
+	Code int
+	Msg  string
+}
+
+func (e *StatusError) Error() string { return e.Msg }
+
 func (c *Client) apiError(resp *http.Response) error {
 	var e struct {
 		Error string `json:"error"`
 	}
 	_ = json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&e)
-	switch resp.StatusCode {
-	case http.StatusUnauthorized:
-		return errors.New("сервер не принял токен — переподключись: sec share setup " + c.BaseURL)
-	case http.StatusRequestEntityTooLarge:
-		if e.Error != "" {
-			return errors.New(e.Error)
-		}
-		return errors.New("секрет слишком большой для этого сервера")
+	msg := fmt.Sprintf("сервер ответил %d", resp.StatusCode)
+	switch {
+	case resp.StatusCode == http.StatusUnauthorized:
+		msg = "сервер не принял токен — переподключись: sec share setup " + c.BaseURL
+	case resp.StatusCode == http.StatusRequestEntityTooLarge && e.Error != "":
+		msg = e.Error
+	case resp.StatusCode == http.StatusRequestEntityTooLarge:
+		msg = "секрет слишком большой для этого сервера"
+	case e.Error != "":
+		msg = fmt.Sprintf("сервер ответил %d: %s", resp.StatusCode, e.Error)
 	}
-	if e.Error != "" {
-		return fmt.Errorf("сервер ответил %d: %s", resp.StatusCode, e.Error)
-	}
-	return fmt.Errorf("сервер ответил %d", resp.StatusCode)
+	return &StatusError{Code: resp.StatusCode, Msg: msg}
 }
 
 func (c *Client) Create(blob []byte, ttl time.Duration, once bool) (string, time.Time, error) {

@@ -10,7 +10,6 @@ package command
 
 import (
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 
@@ -63,13 +62,12 @@ var completionFlags = map[string][]string{
 	"set":     {"--clipboard", "--clear", "--stdin", "--from-file", "--note", "--kind", "--override"},
 	"gen":     {"--len", "--symbols", "--clip", "--note", "--kind"},
 	"get":     {"--clip", "--peek", "--fingerprint", "--once", "--prev", "--clear-after", "--out"},
-	"history": {"--json"},
-	"meta":    {"--note", "--kind", "--rotate-url", "--rotate-every", "--expires", "--json"},
-	"stale":   {"--older-than", "--json"},
+	"meta":    {"--note", "--kind", "--rotate-url", "--rotate-every", "--expires"},
+	"stale":   {"--older-than"},
 	"otp":     {"--clip"},
 	"diff":    {"--sudo", "--only"},
-	"ls":      {"-l", "--json", "--filter", "-f"},
-	"find":    {"-l", "--json"},
+	"ls":      {"-l", "--filter", "-f"},
+	"find":    {"-l"},
 	"rm":      {"--all"},
 	"mv":      {"--force"},
 	"cp":      {"--force"},
@@ -89,9 +87,8 @@ var completionFlags = map[string][]string{
 	"backup":  {"--file"},
 	"restore": {"--file", "--replace"},
 	"sync":    {"--file"},
-	"log":     {"-n", "--all", "--json"},
-	"info":    {"--json"},
-	"stats":   {"--days", "--all", "--json"},
+	"log":     {"-n", "--all"},
+	"stats":   {"--days", "--all"},
 }
 
 // completionCommand печатает скрипт дополнения для указанного шелла.
@@ -111,7 +108,8 @@ func completionCommand(args []string) int {
 	default:
 		die("укажи шелл: sec completion zsh|bash|fish")
 	}
-	os.Stdout.WriteString(script)
+	fmt.Fprint(stdout, script)
+	emit(map[string]string{"shell": shell, "script": script})
 	return 0
 }
 
@@ -124,7 +122,7 @@ func completeCommand(args []string) int {
 		st = nil
 	}
 	for _, c := range completeCandidates(st, args) {
-		fmt.Println(c)
+		fmt.Fprintln(stdout, c)
 	}
 	return 0
 }
@@ -149,7 +147,11 @@ func completeCandidates(st *store.Store, args []string) []string {
 
 	// флаг
 	if strings.HasPrefix(cur, "-") {
-		return matchPrefix(completionFlags[sub], cur)
+		flags := completionFlags[sub]
+		if sub != "run" && sub != "completion" && knownCommands[sub] {
+			flags = append(append([]string{}, flags...), "--json") // общий флаг, см. output.go
+		}
+		return matchPrefix(flags, cur)
 	}
 
 	// первый аргумент share смешанный: сабкоманды и ссылка proj/KEY —

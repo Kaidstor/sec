@@ -23,19 +23,6 @@ var (
 	profileRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 )
 
-func die(format string, a ...any) {
-	fmt.Fprintf(os.Stderr, "sec: "+format+"\n", a...)
-	os.Exit(2)
-}
-
-// dieNotFound — «адресата нет» (ключ/проект): отдельный код выхода 3, чтобы
-// обёртки (GUI, secretspec-провайдер) отличали отсутствие секрета от настоящей
-// ошибки (нечитаемый стор, битая ссылка) без разбора русских сообщений stderr.
-func dieNotFound(format string, a ...any) {
-	fmt.Fprintf(os.Stderr, "sec: "+format+"\n", a...)
-	os.Exit(3)
-}
-
 // cwdProject — проект по умолчанию: имя текущей директории.
 func cwdProject() string {
 	wd, err := os.Getwd()
@@ -236,12 +223,12 @@ func selectKeys(keys map[string]store.Secret, only, projLabel string, includeFil
 		}
 		if len(binSkipped) > 0 {
 			sort.Strings(binSkipped)
-			fmt.Fprintf(os.Stderr, "sec: бинарные (файловые) ключи пропущены: %s (доставать: sec get %s/<KEY> --out <файл>)\n",
+			warnf("бинарные (файловые) ключи пропущены: %s (доставать: sec get %s/<KEY> --out <файл>)",
 				strings.Join(binSkipped, ", "), projLabel)
 		}
 		if len(fileSkipped) > 0 {
 			sort.Strings(fileSkipped)
-			fmt.Fprintf(os.Stderr, "sec: файловые (kind: file) ключи в env не инжектятся: %s (путь к файлу — run --file <KEY>; значение в env — --include-files или --only)\n",
+			warnf("файловые (kind: file) ключи в env не инжектятся: %s (путь к файлу — run --file <KEY>; значение в env — --include-files или --only)",
 				strings.Join(fileSkipped, ", "))
 		}
 		return out
@@ -309,15 +296,15 @@ Windows Credential Manager (fallback: env SEC_KEY / файл).
   sec get <proj>/<KEY> --out [файл]    записать значение в файл (файловые/бинарные);
                                        без пути — в текущую папку под исходным именем
   sec verify <proj>/<KEY>              сверить переданное значение с сохранённым
-  sec history <proj>/<KEY> [--json]    версии значения (маскированно, до 5, +redo)
+  sec history <proj>/<KEY>             версии значения (маскированно, до 5, +redo)
   sec undo <proj>/<KEY>                шаг назад по истории (redo вернёт вперёд)
   sec redo <proj>/<KEY>                вернуть значение, отменённое undo
   sec forget <proj>/<KEY>              стереть историю и redo (после ротации)
   sec meta <proj>/<KEY> [--note ...]   несекретные метаданные (назначение, ротация)
   sec otp <proj>/<KEY> [--clip]        TOTP/HOTP-код из сохранённого seed (RFC 6238/4226)
-  sec ls [proj] [-l|--json]            список проектов / ключей (без значений)
+  sec ls [proj] [-l]                   список проектов / ключей (без значений)
   sec ls [proj] --filter <шаблон>      только совпавшие имена (подстрока/glob)
-  sec find <шаблон> [-l|--json]        найти ключи по всему хранилищу → proj/KEY
+  sec find <шаблон> [-l]               найти ключи по всему хранилищу → proj/KEY
   sec diff <projA> <projB>             сравнить проекты по отпечаткам (без значений)
   sec diff <proj> <host>:/app/.env     сверить стор с env-файлом на хосте (или локальным)
   sec mv <proj>/<KEY> <p2>[/<KEY2>]    перенести/переименовать (без раскрытия)
@@ -352,8 +339,8 @@ Windows Credential Manager (fallback: env SEC_KEY / файл).
   sec sync --file <blob>               синхронизация через общий passphrase-блоб
   sec rekey                            ротация мастер-ключа с перешифровкой стора
   sec log [proj[/KEY]] [-n 20] [--all] журнал обращений (кто/когда/что, без значений)
-  sec info [--json]                    путь к хранилищу, бэкенд ключа, статистика
-  sec stats [--days 14] [--json]       что из CLI реально используется, а что ни разу
+  sec info                             путь к хранилищу, бэкенд ключа, статистика
+  sec stats [--days 14]                что из CLI реально используется, а что ни разу
   sec skills install|status            агентский скилл sec у Claude/Codex (дальше обновляется сам)
   sec completion zsh|bash|fish         скрипт автодополнения для шелла
   sec version                          версия CLI и платформа
@@ -441,6 +428,28 @@ kind: config — несекретная настройка (endpoint, разме
   SEC_SHARE_URL   адрес сервера ссылок — поверх сохранённого (sec share setup)
   SEC_SHARE_TOKEN токен сервера ссылок — поверх сохранённого
 
+Общие флаги (в любом месте до --):
+  --json          ответ любой команды — JSON-конвертом в stdout, отказы тоже:
+                  {"v":1, "command", "exit", "data", "warning":[…], "error":{kind, message}}
+                  Значение секрета попадает в data только у get (как и в тексте),
+                  маски и отпечатки — как в тексте. Не работает у run: его stdout
+                  принадлежит запущенной команде. Формат data — sec <cmd> --json
+  --human         текст (по умолчанию)
+  -h, --help      справка; флаги команды — sec <cmd> -h
+error.kind: usage, not_found, store, config, conflict, io, network, auth, api,
+cancelled, interrupted.
+
+Коды выхода:
+  0    сделано
+  1    ответ «нет»: verify — не совпало, find — ничего не нашлось, scan — есть
+       значения секретов, doctor — есть проблемы, deploy — не подтверждено
+  2    ошибка аргументов, хранилища, файла, сети или сервера ссылок; у гейтов
+       check / diff / stale — ещё и «не сходится» (не хватает ключей, есть
+       различия, пора ротировать): причина — в data, error пуст
+  3    нет ключа или проекта
+  130  прервано Ctrl+C во время ввода
+  run возвращает код запущенной команды. Код 4 (таймаут) sec не использует.
+
 Ссылки-шаринг (sec share): значение шифруется локально (AES-256-GCM), на
 сервер уходит только шифротекст; ключ расшифровки — во фрагменте URL, который
 браузер серверу не отправляет. Ссылка по умолчанию одноразовая (--multi —
@@ -503,17 +512,35 @@ func usedFlags(cmd string, args []string) []string {
 // Run — точка входа CLI: разбирает args (без имени программы), маршрутизирует
 // команду и возвращает код выхода. main() из пакета main делегирует сюда.
 func Run(args []string) int {
-	if len(args) == 0 {
-		fmt.Print(usage)
-		return 2
+	// скрытые __-команды зовёт шелл и сам sec: их argv — слова пользователя
+	// (`sec ls --json<TAB>`), общие флаги оттуда вынимать нельзя
+	asJSON := false
+	if len(args) == 0 || !strings.HasPrefix(args[0], "__") {
+		asJSON, args = splitGlobalFlags(args)
 	}
+	if len(args) == 0 {
+		startOutput("help", asJSON)
+		fmt.Fprint(stdout, usage)
+		emit(map[string]string{"usage": usage})
+		return finish(2)
+	}
+	cmd := args[0]
+	if c, ok := commandAliases[cmd]; ok {
+		cmd = c
+	}
+	startOutput(cmd, asJSON)
 	recordUsage(args)
 	// самолечение агентского скилла до switch: `sec run` замещает процесс
 	// (syscall.Exec) и в пост-хук не вернулся бы
 	syncSkillsStale(args[0])
+	return finish(dispatch(args))
+}
+
+func dispatch(args []string) int {
 	switch args[0] {
 	case "-h", "--help", "help":
-		fmt.Print(usage)
+		fmt.Fprint(stdout, usage)
+		emit(map[string]string{"usage": usage})
 		return 0
 	case "-v", "--version", "version":
 		return versionCommand(args[1:])
@@ -602,7 +629,6 @@ func Run(args []string) int {
 	case "skills":
 		return skillsCommand(args[1:])
 	default:
-		die("неизвестная команда %q (sec --help)", args[0])
-		return 2 // die() уже вызвал os.Exit; return для компилятора
+		return fail(2, kindUsage, "неизвестная команда %q (sec --help)", args[0])
 	}
 }

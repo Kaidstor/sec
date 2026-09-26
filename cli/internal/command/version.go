@@ -28,6 +28,8 @@ func versionString() string {
 }
 
 func versionCommand([]string) int {
-	fmt.Println(versionString())
+	fmt.Fprintln(stdout, versionString())
+	emit(map[string]string{"version": version, "commit": commit, "date": date,
+		"os": runtime.GOOS, "arch": runtime.GOARCH})
 	return 0
 }

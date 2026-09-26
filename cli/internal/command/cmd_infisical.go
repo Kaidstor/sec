@@ -12,7 +12,6 @@ import (
 	"github.com/kaidstor/sec/internal/audit"
 	"github.com/kaidstor/sec/internal/store"
 
-	"flag"
 	"fmt"
 	"strings"
 
@@ -22,10 +21,10 @@ import (
 func importFromInfisical(proj, env, path, projectID, token string) int {
 	kv, err := infisical.Pull(infisical.Ref{Env: env, Path: path, ProjectID: projectID, Token: token})
 	if err != nil {
-		die("%v", err)
+		dieK(kindAPI, "%v", err)
 	}
 	if len(kv) == 0 {
-		die("Infisical (env=%s path=%s) не вернул ни одного секрета", env, path)
+		dieK(kindAPI, "Infisical (env=%s path=%s) не вернул ни одного секрета", env, path)
 	}
 	writeImported(proj, kv, fmt.Sprintf("из Infisical env=%s path=%s", env, path))
 	return 0
@@ -33,7 +32,7 @@ func importFromInfisical(proj, env, path, projectID, token string) int {
 
 func pushCommand(args []string) int {
 	service, rest := splitArgs(args)
-	fs := flag.NewFlagSet("push", flag.ExitOnError)
+	fs := newFlagSet("push")
 	var toInfisical bool
 	var ienv, path, projectID, token, only string
 	fs.BoolVar(&toInfisical, "to-infisical", false, "цель — Infisical (через их CLI)")
@@ -55,7 +54,7 @@ func pushCommand(args []string) int {
 
 	st, _, _, err := store.Open(false)
 	if err != nil {
-		die("%v", err)
+		dieStore(err)
 	}
 	keys := st.EffectiveKeys(sp) // собственные + унаследованные, ссылки разрешены
 	if len(keys) == 0 {
@@ -67,9 +66,10 @@ func pushCommand(args []string) int {
 	kv := selectKeys(keys, only, st.DisplayProj(sp), true)
 
 	if err := infisical.Push(infisical.Ref{Env: ienv, Path: path, ProjectID: projectID, Token: token}, kv); err != nil {
-		die("%v", err)
+		dieK(kindAPI, "%v", err)
 	}
 	audit.Record("push", sp, fmt.Sprintf("→ Infisical env=%s path=%s (%d ключей)", ienv, path, len(kv)))
-	fmt.Printf("отправлено из %s в Infisical (env=%s path=%s): %s\n", sp, ienv, path, strings.Join(store.SortedKeys(kv), ", "))
+	fmt.Fprintf(stdout, "отправлено из %s в Infisical (env=%s path=%s): %s\n", sp, ienv, path, strings.Join(store.SortedKeys(kv), ", "))
+	emit(map[string]any{"project": sp, "env": ienv, "path": path, "keys": store.SortedKeys(kv)})
 	return 0
 }

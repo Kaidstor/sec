@@ -141,15 +141,13 @@ func skillsInstall(args []string) int {
 		switch args[i] {
 		case "--target":
 			if i+1 >= len(args) {
-				fmt.Fprintln(os.Stderr, "sec skills: --target требует значение (claude|codex)")
-				return 2
+				return fail(2, kindUsage, "skills: --target требует значение (claude|codex)")
 			}
 			i++
 			target = args[i]
 		case "--dir":
 			if i+1 >= len(args) {
-				fmt.Fprintln(os.Stderr, "sec skills: --dir требует путь")
-				return 2
+				return fail(2, kindUsage, "skills: --dir требует путь")
 			}
 			i++
 			dir = args[i]
@@ -162,24 +160,22 @@ func skillsInstall(args []string) int {
 		case "--force":
 			force = true
 		case "-h", "--help":
-			fmt.Print(skillsUsage)
+			fmt.Fprint(stdout, skillsUsage)
+			emit(map[string]string{"usage": skillsUsage})
 			return 0
 		default:
-			fmt.Fprintf(os.Stderr, "sec skills install: неизвестный аргумент %q\n", args[i])
-			return 2
+			return fail(2, kindUsage, "skills install: неизвестный аргумент %q", args[i])
 		}
 	}
 
 	if link && linkPath == "" {
 		// без пути — SKILL.md из текущей папки: dev-запуск из корня репо
 		if _, err := os.Stat("SKILL.md"); err != nil {
-			fmt.Fprintln(os.Stderr, "sec skills: в текущей папке нет SKILL.md — укажи путь: --link <путь>")
-			return 2
+			return fail(2, kindUsage, "skills: в текущей папке нет SKILL.md — укажи путь: --link <путь>")
 		}
 		abs, err := filepath.Abs("SKILL.md")
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "sec skills:", err)
-			return 2
+			return fail(2, kindIO, "skills: %v", err)
 		}
 		linkPath = abs
 	}
@@ -191,8 +187,7 @@ func skillsInstall(args []string) int {
 	default:
 		all := agentSkillDirs()
 		if len(all) == 0 {
-			fmt.Fprintln(os.Stderr, "sec skills: не найдено ни ~/.claude, ни ~/.codex — агентов на машине нет")
-			return 1
+			return fail(1, kindNotFound, "skills: не найдено ни ~/.claude, ни ~/.codex — агентов на машине нет")
 		}
 		for _, a := range all {
 			if target == "" || a[0] == target {
@@ -200,12 +195,18 @@ func skillsInstall(args []string) int {
 			}
 		}
 		if len(dirs) == 0 {
-			fmt.Fprintf(os.Stderr, "sec skills: агент %q не найден\n", target)
-			return 1
+			return fail(1, kindNotFound, "skills: агент %q не найден", target)
 		}
 	}
 
 	code := 0
+	type installed struct {
+		Agent string `json:"agent"`
+		Dir   string `json:"dir"`
+		What  string `json:"what,omitempty"`
+		Error string `json:"error,omitempty"`
+	}
+	results := []installed{}
 	for _, a := range dirs {
 		var err error
 		what := ""
@@ -217,46 +218,66 @@ func skillsInstall(args []string) int {
 			what = "копия v" + version
 		}
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "sec: %s: %v\n", a[0], err)
+			warnf("%s: %v", a[0], err)
+			results = append(results, installed{Agent: a[0], Dir: a[1], Error: err.Error()})
 			code = 1
 			continue
 		}
-		fmt.Printf("✓ %s: %s — %s\n", a[0], what, a[1])
+		results = append(results, installed{Agent: a[0], Dir: a[1], What: what})
+		fmt.Fprintf(stdout, "✓ %s: %s — %s\n", a[0], what, a[1])
 	}
+	emit(results)
 	return code
 }
 
 func skillsStatus() int {
 	all := agentSkillDirs()
+	type status struct {
+		Agent string `json:"agent"`
+		Dir   string `json:"dir"`
+		State string `json:"state"`             // missing | symlink | managed | stale | manual
+		Info  string `json:"version,omitempty"` // версия копии или цель симлинка
+	}
+	list := []status{}
 	if len(all) == 0 {
-		fmt.Println("агентов не найдено (нет ни ~/.claude, ни ~/.codex)")
+		fmt.Fprintln(stdout, "агентов не найдено (нет ни ~/.claude, ни ~/.codex)")
+		emit(list)
 		return 0
 	}
 	for _, a := range all {
 		state, v := skillStateOf(a[1])
 		var line string
+		st := status{Agent: a[0], Dir: a[1], Info: v}
 		switch state {
 		case skillMissing:
 			line = "не установлен (sec skills install)"
+			st.State = "missing"
 		case skillSymlink:
 			line = "симлинк → " + v + " (обновляется сам)"
+			st.State = "symlink"
 		case skillManaged:
+			st.State = "managed"
 			if v == version {
 				line = "копия v" + v + ", актуальна"
 			} else {
 				line = fmt.Sprintf("копия v%s, устарела (текущая v%s) — обновится при следующем запуске sec", v, version)
+				st.State = "stale"
 			}
 		case skillManual:
 			line = "копия без стампа — не обновляется; sec skills install возьмёт под управление"
+			st.State = "manual"
 		}
-		fmt.Printf("%s: %s — %s\n", a[0], line, a[1])
+		list = append(list, st)
+		fmt.Fprintf(stdout, "%s: %s — %s\n", a[0], line, a[1])
 	}
+	emit(list)
 	return 0
 }
 
 func skillsCommand(args []string) int {
 	if len(args) == 0 {
-		fmt.Print(skillsUsage)
+		fmt.Fprint(stdout, skillsUsage)
+		emit(map[string]string{"usage": skillsUsage})
 		return 2
 	}
 	switch args[0] {
@@ -265,10 +286,10 @@ func skillsCommand(args []string) int {
 	case "status":
 		return skillsStatus()
 	case "-h", "--help", "help":
-		fmt.Print(skillsUsage)
+		fmt.Fprint(stdout, skillsUsage)
+		emit(map[string]string{"usage": skillsUsage})
 		return 0
 	default:
-		fmt.Fprintf(os.Stderr, "sec skills: неизвестная подкоманда %q\n", args[0])
-		return 2
+		return fail(2, kindUsage, "skills: неизвестная подкоманда %q", args[0])
 	}
 }

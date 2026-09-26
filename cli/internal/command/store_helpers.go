@@ -147,6 +147,6 @@ func mustEditable(st *store.Store, proj, key string, override bool) {
 		return
 	}
 	if msg := editBlock(st, proj, key); msg != "" {
-		die("%s", msg)
+		dieK(kindConflict, "%s", msg)
 	}
 }

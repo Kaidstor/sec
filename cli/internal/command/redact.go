@@ -20,7 +20,6 @@ import (
 	"github.com/kaidstor/sec/internal/store"
 
 	"bufio"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -36,7 +35,7 @@ type replacement struct {
 }
 
 func redactCommand(args []string) int {
-	fs := flag.NewFlagSet("redact", flag.ExitOnError)
+	fs := newFlagSet("redact")
 	var minLen int
 	var withHistory, mask, includeConfig bool
 	var outFile string
@@ -54,7 +53,7 @@ func redactCommand(args []string) int {
 
 	st, _, _, err := store.Open(false)
 	if err != nil {
-		die("%v", err)
+		dieStore(err)
 	}
 	values, skips := collectStoreValues(st, storeScope{minLen: minLen, withHistory: withHistory, includeConfig: includeConfig})
 	reportScanSkips(skips, minLen)
@@ -62,11 +61,11 @@ func redactCommand(args []string) int {
 
 	// Куда пишем результат: файл 0600 или stdout. Вывод безопасен (секретов нет),
 	// но 0600 держим консистентно с export/render.
-	var w io.Writer = os.Stdout
+	var w io.Writer = stdout
 	if outFile != "" {
 		f, err := os.OpenFile(outFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 		if err != nil {
-			die("запись %s: %v", outFile, err)
+			dieK(kindIO, "запись %s: %v", outFile, err)
 		}
 		defer f.Close()
 		w = f
@@ -77,19 +76,31 @@ func redactCommand(args []string) int {
 	switch {
 	case len(paths) == 0, len(paths) == 1 && paths[0] == "-":
 		if err := redactReader(os.Stdin, w, repls, hit); err != nil {
-			die("чтение stdin: %v", err)
+			dieK(kindIO, "чтение stdin: %v", err)
 		}
 	default:
 		src = strings.Join(paths, ", ")
 		for _, p := range paths {
 			if err := redactPath(p, w, repls, hit); err != nil {
-				die("%s: %v", p, err)
+				dieK(kindIO, "%s: %v", p, err)
 			}
 		}
 	}
 
 	report(hit)
 	audit.Record("redact", src, fmt.Sprintf("скрыто ключей: %d", len(hit)))
+	refs := make([]string, 0, len(hit))
+	for ref := range hit {
+		refs = append(refs, ref)
+	}
+	sort.Strings(refs)
+	out := map[string]any{"hidden": refs}
+	if outFile != "" {
+		out["file"] = outFile
+	} else {
+		out["text"] = captured.String() // очищенный текст: в JSON-режиме stdout — этот буфер
+	}
+	emit(out)
 	return 0
 }
 
@@ -175,8 +186,11 @@ func placeholderFor(refs []string, mask bool) string {
 // report печатает в stderr сводку о вычищенных ключах (имена безопасны). В
 // stdout идёт только очищенный текст, поэтому сводка не мешает пайпу.
 func report(hit map[string]bool) {
+	if jsonMode { // в JSON список скрытого — поле hidden
+		return
+	}
 	if len(hit) == 0 {
-		fmt.Fprintln(os.Stderr, "sec: совпадений нет — вывод идентичен вводу")
+		warnf("совпадений нет — вывод идентичен вводу")
 		return
 	}
 	refs := make([]string, 0, len(hit))
@@ -184,5 +198,5 @@ func report(hit map[string]bool) {
 		refs = append(refs, ref)
 	}
 	sort.Strings(refs)
-	fmt.Fprintf(os.Stderr, "sec: скрыто ключей: %d (%s)\n", len(hit), strings.Join(refs, ", "))
+	warnf("скрыто ключей: %d (%s)", len(hit), strings.Join(refs, ", "))
 }

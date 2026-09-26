@@ -9,22 +9,29 @@ import (
 	"github.com/kaidstor/sec/internal/keyring"
 	"github.com/kaidstor/sec/internal/store"
 
-	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 )
 
+// emptyIfNil — пустой список вместо null в JSON.
+func emptyIfNil(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
+}
+
 func lsCommand(args []string) int {
 	service, rest := splitArgs(args)
-	fs := flag.NewFlagSet("ls", flag.ExitOnError)
-	var long, asJSON bool
+	fs := newFlagSet("ls")
+	var long bool
+	asJSON := jsonMode
 	var filter string
 	fs.BoolVar(&long, "l", false, "показать даты обновления / метаданные")
-	fs.BoolVar(&asJSON, "json", false, "машинный вывод JSON (без значений)")
 	fs.StringVar(&filter, "filter", "", "показать только совпавшие имена: подстрока без учёта регистра или glob (*_TOKEN)")
 	fs.StringVar(&filter, "f", "", "то же, что --filter (короткая форма)")
 	_ = fs.Parse(rest)
@@ -38,7 +45,7 @@ func lsCommand(args []string) int {
 
 	st, mkey, _, err := store.Open(false)
 	if err != nil {
-		die("%v", err)
+		dieStore(err)
 	}
 
 	// профили сервиса (части после '@' ключей вида service@profile)
@@ -56,7 +63,7 @@ func lsCommand(args []string) int {
 	// или ключи. Поиск по всему стору разом — отдельная команда sec find.
 	keep := func(name string) bool { return matchFilter(filter, name) }
 	nothingFound := func() int {
-		fmt.Printf("ничего не найдено по фильтру %q (искать по всему хранилищу: sec find '%s')\n", filter, filter)
+		fmt.Fprintf(stdout, "ничего не найдено по фильтру %q (искать по всему хранилищу: sec find '%s')\n", filter, filter)
 		return 0
 	}
 
@@ -125,15 +132,14 @@ func lsCommand(args []string) int {
 		default:
 			v = build(store.ProjKey(service, profile), filter)
 		}
-		data, _ := json.MarshalIndent(v, "", "  ")
-		fmt.Println(string(data))
+		emit(v)
 		return 0
 	}
 
 	// список сервисов: группируем service@profile под базовым сервисом
 	if service == "" {
 		if len(st.Projects) == 0 {
-			fmt.Println("хранилище пусто")
+			fmt.Fprintln(stdout, "хранилище пусто")
 			return 0
 		}
 		bases := map[string]struct{}{}
@@ -148,9 +154,9 @@ func lsCommand(args []string) int {
 			}
 			shown++
 			if profs := profilesOf(b); len(profs) > 0 {
-				fmt.Printf("%-24s профили: %s\n", b, strings.Join(profs, ", "))
+				fmt.Fprintf(stdout, "%-24s профили: %s\n", b, strings.Join(profs, ", "))
 			} else {
-				fmt.Printf("%-24s %d ключ(ей)\n", b, len(st.Projects[b]))
+				fmt.Fprintf(stdout, "%-24s %d ключ(ей)\n", b, len(st.Projects[b]))
 			}
 		}
 		if shown == 0 {
@@ -166,14 +172,14 @@ func lsCommand(args []string) int {
 			shown := 0
 			if filter == "" && len(st.Projects[service]) > 0 {
 				shown++
-				fmt.Printf("%-32s %d ключ(ей)\n", service+"@", len(st.Projects[service]))
+				fmt.Fprintf(stdout, "%-32s %d ключ(ей)\n", service+"@", len(st.Projects[service]))
 			}
 			for _, prof := range profs {
 				if !keep(prof) {
 					continue
 				}
 				shown++
-				fmt.Printf("%-32s %d ключ(ей)\n", store.ProjKey(service, prof), len(st.Projects[store.ProjKey(service, prof)]))
+				fmt.Fprintf(stdout, "%-32s %d ключ(ей)\n", store.ProjKey(service, prof), len(st.Projects[store.ProjKey(service, prof)]))
 			}
 			if shown == 0 {
 				return nothingFound()
@@ -193,7 +199,7 @@ func lsCommand(args []string) int {
 		for i, p := range parents {
 			labels[i] = st.DisplayProj(p)
 		}
-		fmt.Printf("наследует (read-only): %s\n", strings.Join(labels, ", "))
+		fmt.Fprintf(stdout, "наследует (read-only): %s\n", strings.Join(labels, ", "))
 	}
 	shown := 0
 	for _, k := range store.SortedKeys(eff) {
@@ -210,9 +216,9 @@ func lsCommand(args []string) int {
 			mark = "  ⤷ " + st.DisplayRef(source)
 		}
 		if long {
-			fmt.Printf("%-32s %s%s\n", k, keyDetails(eff[k]), mark)
+			fmt.Fprintf(stdout, "%-32s %s%s\n", k, keyDetails(eff[k]), mark)
 		} else {
-			fmt.Println(k + mark)
+			fmt.Fprintln(stdout, k+mark)
 		}
 	}
 	if shown == 0 {
@@ -228,10 +234,10 @@ func lsCommand(args []string) int {
 // svc@prod, svc@*), правая — на ключ.
 func findCommand(args []string) int {
 	pat, rest := splitArgs(args)
-	fs := flag.NewFlagSet("find", flag.ExitOnError)
-	var long, asJSON bool
+	fs := newFlagSet("find")
+	var long bool
+	asJSON := jsonMode
 	fs.BoolVar(&long, "l", false, "показать даты обновления / метаданные")
-	fs.BoolVar(&asJSON, "json", false, "машинный вывод JSON (без значений)")
 	_ = fs.Parse(rest)
 	if pat == "" {
 		pat = fs.Arg(0)
@@ -243,7 +249,7 @@ func findCommand(args []string) int {
 
 	st, _, _, err := store.Open(false)
 	if err != nil {
-		die("%v", err)
+		dieStore(err)
 	}
 
 	type hit struct {
@@ -285,16 +291,14 @@ func findCommand(args []string) int {
 	}
 
 	if len(hits) == 0 {
-		if asJSON {
-			fmt.Println("[]")
-		} else {
-			fmt.Fprintf(os.Stderr, "sec: по %q ничего не нашлось (sec ls — весь список проектов)\n", pat)
+		if !asJSON {
+			warnf("по %q ничего не нашлось (sec ls — весь список проектов)", pat)
 		}
+		emit(hits)
 		return 1 // как у grep: пусто — ненулевой код, удобно как условие в скрипте
 	}
 	if asJSON {
-		data, _ := json.MarshalIndent(hits, "", "  ")
-		fmt.Println(string(data))
+		emit(hits)
 		return 0
 	}
 	for _, h := range hits {
@@ -304,9 +308,9 @@ func findCommand(args []string) int {
 		}
 		if long {
 			s := st.Projects[store.ProjKey(h.Project, h.Profile)][h.Key]
-			fmt.Printf("%-40s %s%s\n", h.Ref, keyDetails(s), mark)
+			fmt.Fprintf(stdout, "%-40s %s%s\n", h.Ref, keyDetails(s), mark)
 		} else {
-			fmt.Println(h.Ref + mark)
+			fmt.Fprintln(stdout, h.Ref+mark)
 		}
 	}
 	return 0
@@ -317,6 +321,9 @@ func findCommand(args []string) int {
 // себя командой (exec); с --file остаётся ждать её, чтобы удалить
 // материализованные файлы после выхода.
 func runCommand(args []string) int {
+	if jsonMode {
+		return fail(2, kindUsage, "run отдаёт stdout запущенной команде — --json к нему не применим (флаг после -- уходит команде как есть)")
+	}
 	sep := -1
 	for i, a := range args {
 		if a == "--" {
@@ -333,7 +340,7 @@ func runCommand(args []string) int {
 	}
 
 	service, rest := splitArgs(head)
-	fs := flag.NewFlagSet("run", flag.ExitOnError)
+	fs := newFlagSet("run")
 	var only string
 	var verbose, includeFiles bool
 	var mountSpecs stringList
@@ -351,7 +358,7 @@ func runCommand(args []string) int {
 
 	st, _, _, err := store.Open(false)
 	if err != nil {
-		die("%v", err)
+		dieStore(err)
 	}
 	keys := st.EffectiveKeys(proj) // собственные + унаследованные, ссылки разрешены
 	if len(keys) == 0 && len(mounts) == 0 {
@@ -377,18 +384,18 @@ func runCommand(args []string) int {
 		audit.Record("run", proj, fmt.Sprintf("env += %s → %s", strings.Join(store.SortedKeys(extra), ","), tail[0]))
 		code, err := execReplace(path, tail, mergedEnv(extra))
 		if err != nil {
-			die("exec %s: %v", tail[0], err)
+			dieK(kindIO, "exec %s: %v", tail[0], err)
 		}
 		return code // на unix недостижимо: exec замещает процесс (см. exec_<os>.go)
 	}
 
 	fenv, cleanup, err := materializeMounts(st, mounts) // при ошибке прибирает за собой сам
 	if err != nil {
-		die("%v", err)
+		dieK(kindIO, "%v", err)
 	}
 	for k, v := range fenv {
 		if _, clash := extra[k]; clash {
-			fmt.Fprintf(os.Stderr, "sec: env-ключ %s из стора перекрыт --file — в env уйдёт путь файла, не значение\n", k)
+			warnf("env-ключ %s из стора перекрыт --file — в env уйдёт путь файла, не значение", k)
 		}
 		extra[k] = v // путь файла поверх одноимённого секрета: --file — явное намерение
 	}
@@ -403,8 +410,7 @@ func runCommand(args []string) int {
 	code, rerr := execSpawn(path, tail, mergedEnv(extra))
 	cleanup()
 	if rerr != nil {
-		fmt.Fprintf(os.Stderr, "sec: exec %s: %v\n", tail[0], rerr)
-		return 2
+		return fail(2, kindIO, "exec %s: %v", tail[0], rerr)
 	}
 	return code
 }
@@ -437,7 +443,7 @@ func mergedEnv(extra map[string]string) []string {
 
 func exportCommand(args []string) int {
 	service, rest := splitArgs(args)
-	fs := flag.NewFlagSet("export", flag.ExitOnError)
+	fs := newFlagSet("export")
 	var file string
 	var includeFiles bool
 	fs.StringVar(&file, "file", "", "путь к .env-файлу (обязателен)")
@@ -450,7 +456,7 @@ func exportCommand(args []string) int {
 
 	st, _, _, err := store.Open(false)
 	if err != nil {
-		die("%v", err)
+		dieStore(err)
 	}
 	keys := st.EffectiveKeys(proj) // собственные + унаследованные, ссылки разрешены
 	if len(keys) == 0 {
@@ -476,18 +482,19 @@ func exportCommand(args []string) int {
 			proj, st.DisplayProj(proj))
 	}
 	if err := writeSecretFile(file, []byte(b.String())); err != nil {
-		die("запись %s: %v", file, err)
+		dieK(kindIO, "запись %s: %v", file, err)
 	}
 	if len(binSkipped) > 0 {
-		fmt.Fprintf(os.Stderr, "sec: бинарные (файловые) ключи в .env не пишутся, пропущены: %s (sec get %s/<KEY> --out)\n",
+		warnf("бинарные (файловые) ключи в .env не пишутся, пропущены: %s (sec get %s/<KEY> --out)",
 			strings.Join(binSkipped, ", "), st.DisplayProj(proj))
 	}
 	if len(fileSkipped) > 0 {
-		fmt.Fprintf(os.Stderr, "sec: файловые (kind: file) ключи пропущены: %s (--include-files впишет; файлом: sec get %s/<KEY> --out)\n",
+		warnf("файловые (kind: file) ключи пропущены: %s (--include-files впишет; файлом: sec get %s/<KEY> --out)",
 			strings.Join(fileSkipped, ", "), st.DisplayProj(proj))
 	}
 	audit.Record("export", proj, "→ "+file)
-	fmt.Printf("записан %s (0600): %s\n", file, strings.Join(written, ", "))
+	fmt.Fprintf(stdout, "записан %s (0600): %s\n", file, strings.Join(written, ", "))
+	emit(map[string]any{"project": proj, "file": file, "keys": written, "skippedBinary": emptyIfNil(binSkipped), "skippedFile": emptyIfNil(fileSkipped)})
 	return 0
 }
 
@@ -511,7 +518,7 @@ func looksLikePath(arg string) bool {
 }
 
 func importCommand(args []string) int {
-	fs := flag.NewFlagSet("import", flag.ExitOnError)
+	fs := newFlagSet("import")
 	var file, inline string
 	var fromInfisical, fromJSON, fromClipboard bool
 	var ienv, path, projectID, token string
@@ -567,14 +574,14 @@ func importCommand(args []string) int {
 	data, label, path := importSource(inline, file, fromClipboard, target)
 	kv, warns := parseImport(data, fromJSON)
 	for _, w := range warns {
-		fmt.Fprintf(os.Stderr, "sec: %s: %s\n", label, w)
+		warnf("%s: %s", label, w)
 	}
 	if len(kv) == 0 {
 		die("в %s не нашлось ни одной пары KEY=VALUE", label)
 	}
 	writeImported(target, kv, "из "+label)
 	if path != "" {
-		fmt.Fprintf(os.Stderr, "исходный файл остался на диске — удали, если больше не нужен: rm %s\n", path)
+		warnf("исходный файл остался на диске — удали, если больше не нужен: rm %s", path)
 	}
 	return 0
 }
@@ -585,22 +592,22 @@ func importCommand(args []string) int {
 func importSource(inline, file string, fromClipboard bool, service string) (data, label, path string) {
 	switch {
 	case inline != "":
-		fmt.Fprintf(os.Stderr, "sec: JSON пришёл аргументом — значения осели в истории shell и видны в ps;\n"+
-			"    безопаснее пайпом: cat creds.json | sec import %s\n", service)
+		warnf("JSON пришёл аргументом — значения осели в истории shell и видны в ps;\n"+
+			"    безопаснее пайпом: cat creds.json | sec import %s", service)
 		return inline, "аргумента", ""
 	case fromClipboard:
 		s, err := clipboardRead()
 		if err != nil {
-			die("буфер обмена: %v", err)
+			dieK(kindIO, "буфер обмена: %v", err)
 		}
 		if strings.TrimSpace(s) == "" {
-			die("буфер обмена пуст")
+			dieK(kindIO, "буфер обмена пуст")
 		}
 		return s, "буфера обмена", ""
 	case file == "-" || (file == "" && stdinPiped()):
 		b, err := io.ReadAll(os.Stdin)
 		if err != nil {
-			die("чтение stdin: %v", err)
+			dieK(kindIO, "чтение stdin: %v", err)
 		}
 		return string(b), "stdin", ""
 	default:
@@ -609,7 +616,7 @@ func importSource(inline, file string, fromClipboard bool, service string) (data
 		}
 		b, err := os.ReadFile(file)
 		if err != nil {
-			die("чтение %s: %v", file, err)
+			dieK(kindIO, "чтение %s: %v", file, err)
 		}
 		return string(b), file, file
 	}
@@ -635,14 +642,14 @@ func writeImported(proj string, kv map[string]string, source string) (int, int) 
 	defer unlock()
 	st, mkey, _, err := store.Open(true)
 	if err != nil {
-		die("%v", err)
+		dieStore(err)
 	}
 	keys := st.Project(proj)
 	added, updated, skipped := 0, 0, 0
 	var written []string
 	for k, v := range kv {
 		if editBlock(st, proj, k) != "" { // ссылку/наследование не перетираем импортом
-			fmt.Fprintf(os.Stderr, "sec: %s/%s пропущен — ссылка/наследование (перебить: sec set %s/%s --override)\n", proj, k, proj, k)
+			warnf("%s/%s пропущен — ссылка/наследование (перебить: sec set %s/%s --override)", proj, k, proj, k)
 			skipped++
 			continue
 		}
@@ -654,28 +661,30 @@ func writeImported(proj string, kv map[string]string, source string) (int, int) 
 		written = append(written, k)
 	}
 	if err := store.Save(st, mkey); err != nil {
-		die("запись хранилища: %v", err)
+		dieK(kindStore, "запись хранилища: %v", err)
 	}
 	audit.Record("import", proj, fmt.Sprintf("%s (новых %d, обновлено %d, пропущено %d)", source, added, updated, skipped))
 	tail := ""
 	if skipped > 0 {
 		tail = fmt.Sprintf(", пропущено ссылок/наследования %d", skipped)
 	}
-	fmt.Printf("импортировано в %s: %s (новых %d, обновлено %d%s)\n",
+	fmt.Fprintf(stdout, "импортировано в %s: %s (новых %d, обновлено %d%s)\n",
 		proj, strings.Join(store.SortedKeys(kv), ", "), added, updated, tail)
 	printDupeHints(st, mkey, proj, written...)
+	sort.Strings(written)
+	emit(map[string]any{"project": proj, "keys": emptyIfNil(written), "added": added, "updated": updated, "skipped": skipped})
 	return added, updated
 }
 
 // logCommand показывает журнал обращений (значений там нет — только имена).
 func logCommand(args []string) int {
 	filter, rest := splitArgs(args)
-	fs := flag.NewFlagSet("log", flag.ExitOnError)
+	fs := newFlagSet("log")
 	var n int
-	var asJSON, all bool
+	var all bool
+	asJSON := jsonMode
 	fs.IntVar(&n, "n", 20, "сколько последних записей показать (0 — все)")
 	fs.BoolVar(&all, "all", false, "искать и в архивах ротации, а не только в текущем файле")
-	fs.BoolVar(&asJSON, "json", false, "машинный вывод JSON")
 	_ = fs.Parse(rest)
 	if filter == "" {
 		filter = fs.Arg(0)
@@ -704,12 +713,11 @@ func logCommand(args []string) int {
 		if entries == nil {
 			entries = []audit.Entry{}
 		}
-		data, _ := json.MarshalIndent(entries, "", "  ")
-		fmt.Println(string(data))
+		emit(entries)
 		return 0
 	}
 	if len(entries) == 0 {
-		fmt.Println("журнал пуст")
+		fmt.Fprintln(stdout, "журнал пуст")
 		return 0
 	}
 	for _, e := range entries {
@@ -717,15 +725,14 @@ func logCommand(args []string) int {
 		if e.By != "" {
 			line += "← " + e.By
 		}
-		fmt.Println(strings.TrimRight(line, " "))
+		fmt.Fprintln(stdout, strings.TrimRight(line, " "))
 	}
 	return 0
 }
 
 func infoCommand(args []string) int {
-	fs := flag.NewFlagSet("info", flag.ExitOnError)
-	var asJSON bool
-	fs.BoolVar(&asJSON, "json", false, "машинный вывод JSON")
+	fs := newFlagSet("info")
+	asJSON := jsonMode
 	_ = fs.Parse(args)
 
 	out := struct {
@@ -752,24 +759,23 @@ func infoCommand(args []string) int {
 	}
 
 	if asJSON {
-		data, _ := json.MarshalIndent(out, "", "  ")
-		fmt.Println(string(data))
+		emit(out)
 		return 0
 	}
-	fmt.Printf("хранилище:   %s (%d байт)\n", out.Store, out.Size)
-	fmt.Printf("журнал:      %s\n", out.Audit)
+	fmt.Fprintf(stdout, "хранилище:   %s (%d байт)\n", out.Store, out.Size)
+	fmt.Fprintf(stdout, "журнал:      %s\n", out.Audit)
 	if out.Error != "" {
-		fmt.Printf("мастер-ключ: %s\n", out.Error)
+		fmt.Fprintf(stdout, "мастер-ключ: %s\n", out.Error)
 		return 0
 	}
 	switch out.Backend {
 	case "keyring":
-		fmt.Printf("мастер-ключ: %s\n", keyring.OSName())
+		fmt.Fprintf(stdout, "мастер-ключ: %s\n", keyring.OSName())
 	case "env":
-		fmt.Println("мастер-ключ: env SEC_KEY")
+		fmt.Fprintln(stdout, "мастер-ключ: env SEC_KEY")
 	case "file":
-		fmt.Printf("мастер-ключ: файл %s\n", keyring.FilePath())
+		fmt.Fprintf(stdout, "мастер-ключ: файл %s\n", keyring.FilePath())
 	}
-	fmt.Printf("проектов:    %d, ключей: %d\n", out.Projects, out.Keys)
+	fmt.Fprintf(stdout, "проектов:    %d, ключей: %d\n", out.Projects, out.Keys)
 	return 0
 }

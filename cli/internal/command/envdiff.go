@@ -9,7 +9,6 @@ package command
 import (
 	"crypto/hmac"
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 
@@ -72,6 +71,47 @@ type envCounts struct{ same, differ, missing, extra int }
 
 func (c envCounts) changed() bool { return c.differ > 0 || c.missing > 0 }
 
+func (c envCounts) json() map[string]int {
+	return map[string]int{"same": c.same, "differ": c.differ, "missing": c.missing, "extra": c.extra}
+}
+
+type envEntryJSON struct {
+	Key    string `json:"key"`
+	Status string `json:"status"` // same | differ | missing (нет в файле) | extra (только в файле) | drop (--replace удалит)
+	// значения — только у kind: config, как и в тексте: это настройки, не секреты
+	StoreValue string `json:"storeValue,omitempty"`
+	FileValue  string `json:"fileValue,omitempty"`
+}
+
+// envEntriesJSON — сверка для data конверта diff/deploy.
+func envEntriesJSON(entries []envEntry, dropExtra bool) []envEntryJSON {
+	out := make([]envEntryJSON, 0, len(entries))
+	for _, e := range entries {
+		j := envEntryJSON{Key: e.key}
+		switch e.status {
+		case envSame:
+			j.Status = "same"
+		case envDiffer:
+			j.Status = "differ"
+		case envMissing:
+			j.Status = "missing"
+		case envExtra:
+			j.Status = "extra"
+			if dropExtra {
+				j.Status = "drop"
+			}
+		}
+		if e.config && (e.status == envDiffer || e.status == envMissing) {
+			j.StoreValue = e.storeVal
+			if e.status == envDiffer {
+				j.FileValue = e.fileVal
+			}
+		}
+		out = append(out, j)
+	}
+	return out
+}
+
 // printEnvDiff печатает сверку и возвращает счётчики. dropExtra=true (deploy
 // --replace) меняет смысл строк «только в файле»: они не останутся, а исчезнут.
 func printEnvDiff(entries []envEntry, t envTarget, dropExtra bool) envCounts {
@@ -81,19 +121,19 @@ func printEnvDiff(entries []envEntry, t envTarget, dropExtra bool) envCounts {
 		switch e.status {
 		case envSame:
 			c.same++
-			fmt.Printf("= %-32s совпадает\n", e.key)
+			fmt.Fprintf(stdout, "= %-32s совпадает\n", e.key)
 		case envDiffer:
 			c.differ++
-			fmt.Printf("~ %-32s различаются%s\n", e.key, configTail(e))
+			fmt.Fprintf(stdout, "~ %-32s различаются%s\n", e.key, configTail(e))
 		case envMissing:
 			c.missing++
-			fmt.Printf("+ %-32s нет %s%s\n", e.key, where, configTail(e))
+			fmt.Fprintf(stdout, "+ %-32s нет %s%s\n", e.key, where, configTail(e))
 		case envExtra:
 			c.extra++
 			if dropExtra {
-				fmt.Printf("- %-32s будет удалён (только %s, в сторе нет)\n", e.key, where)
+				fmt.Fprintf(stdout, "- %-32s будет удалён (только %s, в сторе нет)\n", e.key, where)
 			} else {
-				fmt.Printf("? %-32s только %s (в сторе нет)\n", e.key, where)
+				fmt.Fprintf(stdout, "? %-32s только %s (в сторе нет)\n", e.key, where)
 			}
 		}
 	}
@@ -101,7 +141,7 @@ func printEnvDiff(entries []envEntry, t envTarget, dropExtra bool) envCounts {
 	if dropExtra {
 		tail = fmt.Sprintf("будет удалено %s — %d", where, c.extra)
 	}
-	fmt.Printf("итого: совпадают %d, различаются %d, нет %s — %d, %s\n",
+	fmt.Fprintf(stdout, "итого: совпадают %d, различаются %d, нет %s — %d, %s\n",
 		c.same, c.differ, where, c.missing, tail)
 	return c
 }
@@ -191,7 +231,7 @@ func envKeysOf(st *store.Store, proj, only string) map[string]store.Secret {
 	}
 	if len(skipped) > 0 {
 		sort.Strings(skipped)
-		fmt.Fprintf(os.Stderr, "sec: файловые (kind: file) ключи в env-файле не участвуют: %s (доставать: sec get %s/<KEY> --out <файл>)\n",
+		warnf("файловые (kind: file) ключи в env-файле не участвуют: %s (доставать: sec get %s/<KEY> --out <файл>)",
 			strings.Join(skipped, ", "), st.DisplayProj(proj))
 	}
 	if len(keys) == 0 {

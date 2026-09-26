@@ -31,9 +31,16 @@ export function secBinary(): string {
 
 // die() в CLI пишет "sec: <текст>" в stderr — вытаскиваем текст без префикса.
 function extractError(err: unknown): string {
-  const e = err as { stderr?: string; message?: string };
+  const e = err as { stderr?: string; stdout?: string; message?: string };
   const stderr = (e.stderr ?? "").trim();
   if (stderr) return stderr.replace(/^sec:\s*/gm, "").trim();
+  // с --json отказ приходит конвертом в stdout, stderr пуст
+  try {
+    const msg = JSON.parse(e.stdout ?? "")?.error?.message;
+    if (typeof msg === "string" && msg) return msg;
+  } catch {
+    // не JSON — обычный отказ
+  }
   return e.message ?? String(err);
 }
 
@@ -138,14 +145,27 @@ export function keyArgs(cmd: string, project: string, key: string, ...extra: str
   return [cmd, `${project}/${key}`, ...extra];
 }
 
+// sec --json отдаёт конверт {v, command, exit, data, warning, error}; CLI до
+// конверта печатал голые данные. Принимаются обе формы: расширение и CLI
+// обновляются порознь.
+export function parseSecJSON<T>(out: string, empty: T): T {
+  if (!out.trim()) return empty;
+  const v = JSON.parse(out);
+  if (v && typeof v === "object" && !Array.isArray(v) && "v" in v && "command" in v && "data" in v) {
+    if (v.error) throw new Error(v.error.message);
+    return (v.data ?? empty) as T;
+  }
+  return v as T;
+}
+
 export async function listSecrets(): Promise<SecretStore> {
   const out = await runSec(["ls", "--json"]);
-  return JSON.parse(out || "{}") as SecretStore;
+  return parseSecJSON<SecretStore>(out, {});
 }
 
 export async function keyHistory(project: string, key: string): Promise<HistoryVersion[]> {
   const out = await runSec(keyArgs("history", project, key, "--json"));
-  return JSON.parse(out || "[]") as HistoryVersion[];
+  return parseSecJSON<HistoryVersion[]>(out, []);
 }
 
 // Валидация как в CLI (router.go), чтобы падать до вызова, с понятной ошибкой.

@@ -6,7 +6,6 @@ package command
 import (
 	"crypto/hmac"
 	"crypto/subtle"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -24,7 +23,7 @@ import (
 // ([user@]host:/путь или локальный путь) — тогда стор сверяется с ним
 // (см. diffAgainstFile).
 func diffCommand(args []string) int {
-	fs := flag.NewFlagSet("diff", flag.ExitOnError)
+	fs := newFlagSet("diff")
 	var sudo bool
 	var only string
 	fs.BoolVar(&sudo, "sudo", false, "читать файл на хосте под sudo (root-овые прод-конфиги)")
@@ -46,7 +45,7 @@ func diffCommand(args []string) int {
 	pa, pb := resolveProj(pos[0]), resolveProj(pos[1])
 	st, mkey, _, err := store.Open(false)
 	if err != nil {
-		die("%v", err)
+		dieStore(err)
 	}
 	a, b := st.EffectiveKeys(pa), st.EffectiveKeys(pb) // ссылки/наследование сравниваем по эффективным значениям
 	if len(a) == 0 {
@@ -64,28 +63,39 @@ func diffCommand(args []string) int {
 		seen[k] = true
 	}
 	same, differ, onlyA, onlyB := 0, 0, 0, 0
+	type keyDiff struct {
+		Key    string `json:"key"`
+		Status string `json:"status"` // same | differ | onlyA | onlyB
+	}
+	keys := []keyDiff{}
 	for _, k := range store.SortedKeys(seen) {
 		sa, okA := a[k]
 		sb, okB := b[k]
 		switch {
 		case okA && okB:
 			if hmac.Equal([]byte(store.Fingerprint(mkey, sa.Value)), []byte(store.Fingerprint(mkey, sb.Value))) {
-				fmt.Printf("%-32s = совпадают\n", k)
+				fmt.Fprintf(stdout, "%-32s = совпадают\n", k)
+				keys = append(keys, keyDiff{k, "same"})
 				same++
 			} else {
-				fmt.Printf("%-32s ≠ различаются\n", k)
+				fmt.Fprintf(stdout, "%-32s ≠ различаются\n", k)
+				keys = append(keys, keyDiff{k, "differ"})
 				differ++
 			}
 		case okA:
-			fmt.Printf("%-32s < только в %s\n", k, pa)
+			fmt.Fprintf(stdout, "%-32s < только в %s\n", k, pa)
+			keys = append(keys, keyDiff{k, "onlyA"})
 			onlyA++
 		default:
-			fmt.Printf("%-32s > только в %s\n", k, pb)
+			fmt.Fprintf(stdout, "%-32s > только в %s\n", k, pb)
+			keys = append(keys, keyDiff{k, "onlyB"})
 			onlyB++
 		}
 	}
-	fmt.Printf("итого: совпадают %d, различаются %d, только в %s — %d, только в %s — %d\n",
+	fmt.Fprintf(stdout, "итого: совпадают %d, различаются %d, только в %s — %d, только в %s — %d\n",
 		same, differ, pa, onlyA, pb, onlyB)
+	emit(map[string]any{"a": pa, "b": pb, "keys": keys,
+		"same": same, "differ": differ, "onlyA": onlyA, "onlyB": onlyB})
 	if differ > 0 || onlyA > 0 || onlyB > 0 {
 		return 2
 	}
@@ -104,19 +114,19 @@ func diffAgainstFile(service, target, only string, sudo bool) int {
 
 	st, mkey, _, err := store.Open(false)
 	if err != nil {
-		die("%v", err)
+		dieStore(err)
 	}
 	keys := envKeysOf(st, proj, only)
 
 	data, exists, err := t.read(sudo)
 	if err != nil {
-		die("чтение %s: %v", t, err)
+		dieK(targetKind(t), "чтение %s: %v", t, err)
 	}
 	if !exists {
 		die("%s: файла нет (проверь путь; sudo для root-овых каталогов — --sudo)", t)
 	}
 	if ml := dotenv.MultilineKeys(string(data)); len(ml) > 0 {
-		fmt.Fprintf(os.Stderr, "sec: в %s многострочные значения (%s) — сверка по ним неверна, а sec deploy на таком файле откажется работать\n",
+		warnf("в %s многострочные значения (%s) — сверка по ним неверна, а sec deploy на таком файле откажется работать",
 			t, strings.Join(ml, ", "))
 	}
 	fileKV := parseEnvTargetFile(t, data)
@@ -128,8 +138,10 @@ func diffAgainstFile(service, target, only string, sudo bool) int {
 		}
 	}
 
-	c := printEnvDiff(compareEnvFile(keys, fileKV, mkey), t, false)
+	entries := compareEnvFile(keys, fileKV, mkey)
+	c := printEnvDiff(entries, t, false)
 	audit.Record("diff", proj, "↔ "+t.String())
+	emit(map[string]any{"project": proj, "target": t.String(), "keys": envEntriesJSON(entries, false), "counts": c.json()})
 	// Ненулевой код — только на то, что применил бы deploy. Ключи, которых нет в
 	// сторе, для прод-конфига норма (их патчит CI), и падать на них значило бы
 	// сделать команду непригодной как гейт.
@@ -144,7 +156,7 @@ func diffAgainstFile(service, target, only string, sudo bool) int {
 func parseEnvTargetFile(t envTarget, data []byte) map[string]string {
 	kv, warns := dotenv.Parse(string(data))
 	for _, w := range warns {
-		fmt.Fprintf(os.Stderr, "sec: %s: %s\n", t, w)
+		warnf("%s: %s", t, w)
 	}
 	return kv
 }
@@ -154,7 +166,7 @@ func parseEnvTargetFile(t envTarget, data []byte) map[string]string {
 // скрытого ввода (по умолчанию), stdin или буфера обмена.
 func verifyCommand(args []string) int {
 	ref, rest := splitArgs(args)
-	fs := flag.NewFlagSet("verify", flag.ExitOnError)
+	fs := newFlagSet("verify")
 	var fromClip, fromStdin bool
 	fs.BoolVar(&fromClip, "clipboard", false, "взять кандидата из буфера обмена")
 	fs.BoolVar(&fromStdin, "stdin", false, "взять кандидата из stdin")
@@ -163,7 +175,7 @@ func verifyCommand(args []string) int {
 
 	st, _, _, err := store.Open(false)
 	if err != nil {
-		die("%v", err)
+		dieStore(err)
 	}
 	sec, _, _, ok := st.Lookup(proj, key)
 	if !ok {
@@ -175,18 +187,18 @@ func verifyCommand(args []string) int {
 	case fromClip:
 		cand, err = clipboardRead()
 		if err != nil {
-			die("буфер обмена: %v", err)
+			dieK(kindIO, "буфер обмена: %v", err)
 		}
 	case fromStdin || stdinPiped():
 		data, rerr := io.ReadAll(os.Stdin)
 		if rerr != nil {
-			die("stdin: %v", rerr)
+			dieK(kindIO, "stdin: %v", rerr)
 		}
 		cand = string(data)
 	default:
 		cand, err = readHidden(fmt.Sprintf("значение для сверки с %s/%s: ", proj, key))
 		if err != nil {
-			die("%v", err)
+			dieK(kindIO, "%v", err)
 		}
 	}
 	// сверяем с сырыми байтами значения: у бинарных Value — base64, сравнивать
@@ -195,7 +207,7 @@ func verifyCommand(args []string) int {
 	// (cat добавляет \n кандидату), обычные тримятся при set.
 	stored, berr := sec.Bytes()
 	if berr != nil {
-		die("%s/%s: %v", proj, key, berr)
+		dieK(kindStore, "%s/%s: %v", proj, key, berr)
 	}
 
 	audit.Record("verify", proj+"/"+key, "")
@@ -205,10 +217,11 @@ func verifyCommand(args []string) int {
 			[]byte(strings.TrimRight(cand, "\r\n")),
 			[]byte(strings.TrimRight(sec.Value, "\r\n"))) == 1
 	}
+	emit(map[string]any{"ref": proj + "/" + key, "match": match})
 	if match {
-		fmt.Println("совпадает")
+		fmt.Fprintln(stdout, "совпадает")
 		return 0
 	}
-	fmt.Println("НЕ совпадает")
+	fmt.Fprintln(stdout, "НЕ совпадает")
 	return 1
 }

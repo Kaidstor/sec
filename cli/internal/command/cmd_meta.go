@@ -8,7 +8,6 @@ import (
 	"github.com/kaidstor/sec/internal/audit"
 	"github.com/kaidstor/sec/internal/store"
 
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -78,16 +77,16 @@ func dueAt(s store.Secret) (time.Time, string, bool) {
 
 func metaCommand(args []string) int {
 	ref, rest := splitArgs(args)
-	fs := flag.NewFlagSet("meta", flag.ExitOnError)
+	fs := newFlagSet("meta")
 	var note, kind, rotateURL, rotateEvery, expires string
-	var clear, asJSON bool
+	var clear bool
+	asJSON := jsonMode
 	fs.StringVar(&note, "note", "", "описание/назначение (без секрета)")
 	fs.StringVar(&kind, "kind", "", "тип: password|apikey|totp|file|config|env|...")
 	fs.StringVar(&rotateURL, "rotate-url", "", "где крутить секрет")
 	fs.StringVar(&rotateEvery, "rotate-every", "", "интервал ротации, напр. 90d")
 	fs.StringVar(&expires, "expires", "", "дедлайн: дата YYYY-MM-DD или интервал от сейчас (30d)")
 	fs.BoolVar(&clear, "clear", false, "снять все метаданные")
-	fs.BoolVar(&asJSON, "json", false, "показать метаданные в JSON")
 	_ = fs.Parse(rest)
 	proj, key := resolveKeyRef(ref, fs, "sec meta <proj>/<KEY> [--note ... --kind ... --rotate-every 90d]")
 
@@ -98,10 +97,10 @@ func metaCommand(args []string) int {
 	if !mutating {
 		st, _, _, err := store.Open(false)
 		if err != nil {
-			die("%v", err)
+			dieStore(err)
 		}
 		if own, ok := st.Projects[proj][key]; ok { // собственный ключ (в т.ч. ссылка) — своя мета
-			printMeta(proj, key, own, asJSON)
+			printMeta(proj, key, own, "", asJSON)
 			return 0
 		}
 		sec, _, source, found := st.Lookup(proj, key) // унаследованный — мета родителя
@@ -109,9 +108,9 @@ func metaCommand(args []string) int {
 			dieNotFound("нет %s/%s", proj, key)
 		}
 		if !asJSON {
-			fmt.Printf("%s/%s: метаданные наследуются из %s\n", proj, key, source)
+			fmt.Fprintf(stdout, "%s/%s: метаданные наследуются из %s\n", proj, key, source)
 		}
-		printMeta(proj, key, sec, asJSON)
+		printMeta(proj, key, sec, source, asJSON)
 		return 0
 	}
 
@@ -119,11 +118,11 @@ func metaCommand(args []string) int {
 	defer unlock()
 	st, mkey, _, err := store.Open(false)
 	if err != nil {
-		die("%v", err)
+		dieStore(err)
 	}
 	if _, ok := st.Projects[proj][key]; !ok {
 		if _, org, source, found := st.Lookup(proj, key); found && org == store.OriginExtend {
-			die("%s/%s наследуется из %s — правь метаданные в родителе: sec meta %s", proj, key, source, st.DisplayRef(source))
+			dieK(kindConflict, "%s/%s наследуется из %s — правь метаданные в родителе: sec meta %s", proj, key, source, st.DisplayRef(source))
 		}
 	}
 	sec := mustSecret(st, proj, key)
@@ -170,47 +169,49 @@ func metaCommand(args []string) int {
 	}
 	st.Projects[proj][key] = sec
 	if err := store.Save(st, mkey); err != nil {
-		die("запись хранилища: %v", err)
+		dieK(kindStore, "запись хранилища: %v", err)
 	}
 	audit.Record("meta", proj+"/"+key, "")
-	printMeta(proj, key, sec, asJSON)
+	printMeta(proj, key, sec, "", asJSON)
 	return 0
 }
 
-func printMeta(proj, key string, sec store.Secret, asJSON bool) {
+// printMeta печатает метаданные ключа; from — откуда они унаследованы ("" —
+// собственные).
+func printMeta(proj, key string, sec store.Secret, from string, asJSON bool) {
 	if asJSON {
 		out := struct {
-			Ref  string      `json:"ref"`
-			Meta *store.Meta `json:"meta"`
-		}{proj + "/" + key, sec.Meta}
-		data, _ := json.MarshalIndent(out, "", "  ")
-		fmt.Println(string(data))
+			Ref           string      `json:"ref"`
+			Meta          *store.Meta `json:"meta"`
+			InheritedFrom string      `json:"inheritedFrom,omitempty"`
+		}{proj + "/" + key, sec.Meta, from}
+		emit(out)
 		return
 	}
 	if sec.Meta == nil {
-		fmt.Printf("%s/%s: метаданных нет\n", proj, key)
+		fmt.Fprintf(stdout, "%s/%s: метаданных нет\n", proj, key)
 		return
 	}
 	m := sec.Meta
-	fmt.Printf("%s/%s\n", proj, key)
+	fmt.Fprintf(stdout, "%s/%s\n", proj, key)
 	if m.Kind != "" {
-		fmt.Printf("  тип:       %s\n", m.Kind)
+		fmt.Fprintf(stdout, "  тип:       %s\n", m.Kind)
 	}
 	if m.Note != "" {
-		fmt.Printf("  заметка:   %s\n", m.Note)
+		fmt.Fprintf(stdout, "  заметка:   %s\n", m.Note)
 	}
 	if m.RotateURL != "" {
-		fmt.Printf("  ротация:   %s\n", m.RotateURL)
+		fmt.Fprintf(stdout, "  ротация:   %s\n", m.RotateURL)
 	}
 	if m.RotateEvery != "" {
-		fmt.Printf("  интервал:  %s\n", m.RotateEvery)
+		fmt.Fprintf(stdout, "  интервал:  %s\n", m.RotateEvery)
 	}
 	if due, src, ok := dueAt(sec); ok {
 		status := "ок"
 		if time.Now().After(due) {
 			status = "ПРОСРОЧЕНО"
 		}
-		fmt.Printf("  крутить до: %s (%s, %s)\n", fmtTime(due.Format(time.RFC3339)), src, status)
+		fmt.Fprintf(stdout, "  крутить до: %s (%s, %s)\n", fmtTime(due.Format(time.RFC3339)), src, status)
 	}
 }
 
@@ -218,11 +219,9 @@ func printMeta(proj, key string, sec store.Secret, asJSON bool) {
 // политике (expires / rotate-every) либо старше порога --older-than.
 func staleCommand(args []string) int {
 	service, rest := splitArgs(args)
-	fs := flag.NewFlagSet("stale", flag.ExitOnError)
+	fs := newFlagSet("stale")
 	var olderThan string
-	var asJSON bool
 	fs.StringVar(&olderThan, "older-than", "", "порог возраста для ключей без политики, напр. 90d")
-	fs.BoolVar(&asJSON, "json", false, "машинный вывод")
 	_ = fs.Parse(rest)
 	if service == "" {
 		service = fs.Arg(0)
@@ -242,7 +241,7 @@ func staleCommand(args []string) int {
 
 	st, _, _, err := store.Open(false)
 	if err != nil {
-		die("%v", err)
+		dieStore(err)
 	}
 	now := time.Now()
 
@@ -281,17 +280,16 @@ func staleCommand(args []string) int {
 		}
 	}
 
-	if asJSON {
-		data, _ := json.MarshalIndent(items, "", "  ")
-		fmt.Println(string(data))
-		return 0
+	if items == nil {
+		items = []staleItem{}
 	}
+	emit(items)
 	if len(items) == 0 {
-		fmt.Println("нечего ротировать")
+		fmt.Fprintln(stdout, "нечего ротировать")
 		return 0
 	}
 	for _, it := range items {
-		fmt.Printf("%-36s %-24s %s\n", it.Ref, it.Reason, it.Age)
+		fmt.Fprintf(stdout, "%-36s %-24s %s\n", it.Ref, it.Reason, it.Age)
 	}
 	return 2 // ненулевой код — удобно как гейт в CI/скриптах
 }
@@ -308,15 +306,29 @@ func fmtSince(from, to time.Time) string {
 // doctorCommand — здоровье хранилища: права файла, бэкенд ключа, доступность
 // журнала, дубли значений (по отпечатку), сколько ключей пора ротировать.
 func doctorCommand(args []string) int {
-	fs := flag.NewFlagSet("doctor", flag.ExitOnError)
+	fs := newFlagSet("doctor")
 	_ = fs.Parse(args)
 
 	problems := 0
+	type check struct {
+		OK      bool   `json:"ok"`
+		Message string `json:"message"`
+	}
+	checks := []check{}
+	done := func() int {
+		fmt.Fprintf(stdout, "итог: проблем — %d\n", problems)
+		emit(map[string]any{"checks": checks, "problems": problems})
+		return boolToCode(problems > 0)
+	}
 	warn := func(format string, a ...any) {
 		problems++
-		fmt.Printf("  ✗ "+format+"\n", a...)
+		checks = append(checks, check{false, fmt.Sprintf(format, a...)})
+		fmt.Fprintf(stdout, "  ✗ "+format+"\n", a...)
 	}
-	okline := func(format string, a ...any) { fmt.Printf("  ✓ "+format+"\n", a...) }
+	okline := func(format string, a ...any) {
+		checks = append(checks, check{true, fmt.Sprintf(format, a...)})
+		fmt.Fprintf(stdout, "  ✓ "+format+"\n", a...)
+	}
 
 	// права файла хранилища: unix — POSIX 0600, Windows — DACL без широких групп
 	// (реализации — perms_unix.go / perms_windows.go)
@@ -331,8 +343,7 @@ func doctorCommand(args []string) int {
 	st, mkey, backend, err := store.Open(false)
 	if err != nil {
 		warn("хранилище недоступно: %v", err)
-		fmt.Printf("итог: проблем — %d\n", problems)
-		return boolToCode(problems > 0)
+		return done()
 	}
 	okline("мастер-ключ: бэкенд %s", backend)
 
@@ -385,8 +396,7 @@ func doctorCommand(args []string) int {
 		okline("просроченных по политике нет")
 	}
 
-	fmt.Printf("итог: проблем — %d\n", problems)
-	return boolToCode(problems > 0)
+	return done()
 }
 
 // applyMetaFlags навешивает note/kind на ключ при создании (set/gen), не

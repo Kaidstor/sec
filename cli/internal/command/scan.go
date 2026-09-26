@@ -14,7 +14,6 @@ import (
 
 	"bufio"
 	"bytes"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -28,6 +27,12 @@ const scanMaxFileBytes = 8 << 20 // не читаем файлы крупнее 
 type leak struct {
 	loc  string // path:line или "stdin:line"
 	refs []string
+}
+
+// scanLeak — находка в data конверта: место и имена ключей, без значений.
+type scanLeak struct {
+	Loc  string   `json:"loc"`
+	Refs []string `json:"refs"`
 }
 
 // storeScope — что из стора берут в поиск scan и redact.
@@ -81,10 +86,10 @@ func collectStoreValues(st *store.Store, sc storeScope) (map[string][]string, sc
 // reportScanSkips печатает, что осталось за бортом поиска, и как это вернуть.
 func reportScanSkips(skips scanSkips, minLen int) {
 	if skips.short > 0 {
-		fmt.Fprintf(os.Stderr, "sec: пропущено значений короче %d символов: %d (искать всё: --min 1)\n", minLen, skips.short)
+		warnf("пропущено значений короче %d символов: %d (искать всё: --min 1)", minLen, skips.short)
 	}
 	if skips.config > 0 {
-		fmt.Fprintf(os.Stderr, "sec: пропущено несекретных значений (kind: config): %d (искать и их: --include-config)\n", skips.config)
+		warnf("пропущено несекретных значений (kind: config): %d (искать и их: --include-config)", skips.config)
 	}
 }
 
@@ -125,7 +130,7 @@ func collectBinaryValues(st *store.Store, sc storeScope) map[string][]string {
 }
 
 func scanCommand(args []string) int {
-	fs := flag.NewFlagSet("scan", flag.ExitOnError)
+	fs := newFlagSet("scan")
 	var staged bool
 	var minLen int
 	var withHistory, includeConfig bool
@@ -139,14 +144,15 @@ func scanCommand(args []string) int {
 
 	st, _, _, err := store.Open(false)
 	if err != nil {
-		die("%v", err)
+		dieStore(err)
 	}
 
 	scope := storeScope{minLen: minLen, withHistory: withHistory, includeConfig: includeConfig}
 	values, skips := collectStoreValues(st, scope)
 	bins := collectBinaryValues(st, scope)
 	if len(values) == 0 && len(bins) == 0 {
-		fmt.Fprintln(os.Stderr, "sec: нет значений для поиска (все короче --min либо стор пуст)")
+		warnf("нет значений для поиска (все короче --min либо стор пуст)")
+		emit(map[string]any{"leaks": []scanLeak{}})
 		return 0
 	}
 	reportScanSkips(skips, minLen)
@@ -159,7 +165,7 @@ func scanCommand(args []string) int {
 	case len(paths) == 1 && paths[0] == "-":
 		data, rerr := io.ReadAll(io.LimitReader(os.Stdin, scanMaxFileBytes))
 		if rerr != nil {
-			die("чтение stdin: %v", rerr)
+			dieK(kindIO, "чтение stdin: %v", rerr)
 		}
 		leaks = scanData("stdin", data, values, bins)
 	case len(paths) == 0:
@@ -169,7 +175,7 @@ func scanCommand(args []string) int {
 		for _, root := range paths {
 			filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "sec: %s: %v\n", path, err)
+					warnf("%s: %v", path, err)
 					return nil
 				}
 				if d.IsDir() {
@@ -187,14 +193,19 @@ func scanCommand(args []string) int {
 		}
 	}
 
+	found := make([]scanLeak, 0, len(leaks))
+	for _, l := range leaks {
+		found = append(found, scanLeak{l.loc, dedupe(l.refs)})
+	}
+	emit(map[string]any{"leaks": found})
 	if len(leaks) == 0 {
-		fmt.Println("утечек не найдено")
+		fmt.Fprintln(stdout, "утечек не найдено")
 		return 0
 	}
-	for _, l := range leaks {
-		fmt.Printf("%s: %s\n", l.loc, strings.Join(dedupe(l.refs), ", "))
+	for _, l := range found {
+		fmt.Fprintf(stdout, "%s: %s\n", l.Loc, strings.Join(l.Refs, ", "))
 	}
-	fmt.Fprintf(os.Stderr, "sec: найдены значения секретов в открытом виде — не коммить/не публикуй\n")
+	warnf("найдены значения секретов в открытом виде — не коммить/не публикуй")
 	return 1
 }
 
@@ -300,7 +311,7 @@ func scanReader(name string, r io.Reader, values map[string][]string) []leak {
 func scanStaged(values map[string][]string) []leak {
 	out, err := exec.Command("git", "diff", "--cached", "-U0").Output()
 	if err != nil {
-		die("git diff --cached: %v (это git-репозиторий?)", err)
+		dieK(kindIO, "git diff --cached: %v (это git-репозиторий?)", err)
 	}
 	single, multi := splitValues(values)
 	var leaks []leak

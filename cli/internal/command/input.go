@@ -16,7 +16,7 @@ import (
 // пользователя в пайпе нельзя, для этого есть явный --yes.
 func confirmYes(question string) bool {
 	if stdinPiped() {
-		fmt.Fprintln(os.Stderr, "sec: stdin — не терминал, спросить некого (подтвердить заранее: --yes)")
+		warnf("stdin — не терминал, спросить некого (подтвердить заранее: --yes)")
 		return false
 	}
 	fmt.Fprintf(os.Stderr, "%s [y/N]: ", question)

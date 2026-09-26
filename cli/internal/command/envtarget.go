@@ -179,7 +179,7 @@ func (t envTarget) after(command string) error {
 		return sshStream(t.host, command)
 	}
 	cmd := localShellCmd(command)
-	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	cmd.Stdout, cmd.Stderr = childStdout(), os.Stderr
 	return cmd.Run()
 }
 
@@ -245,4 +245,13 @@ func writeFileKeepMode(path string, data []byte) error {
 		return err
 	}
 	return f.Close()
+}
+
+// targetKind — класс ошибки при работе с целью: ssh-хост (network) или
+// локальный файл (io).
+func targetKind(t envTarget) string {
+	if t.remote() {
+		return kindNetwork
+	}
+	return kindIO
 }

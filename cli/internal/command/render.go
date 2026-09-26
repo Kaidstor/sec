@@ -5,7 +5,6 @@ import (
 	"github.com/kaidstor/sec/internal/store"
 
 	"bytes"
-	"flag"
 	"fmt"
 	"os"
 	"strings"
@@ -45,7 +44,7 @@ func lookupRef(st *store.Store, defService, profile, ref string) (string, error)
 
 func renderCommand(args []string) int {
 	tpl, rest := splitArgs(args)
-	fs := flag.NewFlagSet("render", flag.ExitOnError)
+	fs := newFlagSet("render")
 	var file, proj string
 	fs.StringVar(&file, "file", "", "куда записать результат (обязателен)")
 	fs.StringVar(&proj, "proj", "", "проект для коротких ссылок, можно с @профилем (умолч. — текущая папка)")
@@ -64,11 +63,11 @@ func renderCommand(args []string) int {
 
 	data, err := os.ReadFile(tpl)
 	if err != nil {
-		die("чтение %s: %v", tpl, err)
+		dieK(kindIO, "чтение %s: %v", tpl, err)
 	}
 	st, _, _, err := store.Open(false)
 	if err != nil {
-		die("%v", err)
+		dieStore(err)
 	}
 	t, err := template.New(tpl).Funcs(template.FuncMap{
 		"secret": func(ref string) (string, error) { return lookupRef(st, service, profile, ref) },
@@ -81,9 +80,10 @@ func renderCommand(args []string) int {
 		die("рендер: %v", err)
 	}
 	if err := writeSecretFile(file, buf.Bytes()); err != nil {
-		die("запись %s: %v", file, err)
+		dieK(kindIO, "запись %s: %v", file, err)
 	}
 	audit.Record("render", projKey, tpl+" → "+file)
-	fmt.Printf("записан %s (0600) из шаблона %s\n", file, tpl)
+	fmt.Fprintf(stdout, "записан %s (0600) из шаблона %s\n", file, tpl)
+	emit(map[string]any{"file": file, "template": tpl, "project": projKey})
 	return 0
 }

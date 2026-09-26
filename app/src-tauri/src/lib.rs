@@ -57,6 +57,12 @@ fn clean_stderr(s: &str) -> String {
         .to_string()
 }
 
+/// С --json отказ приходит конвертом в stdout, stderr пуст: {"error": {"message": …}}.
+fn envelope_error(stdout: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(stdout).ok()?;
+    Some(v.get("error")?.get("message")?.as_str()?.to_string())
+}
+
 #[tauri::command]
 async fn run_sec(args: Vec<String>, stdin: Option<String>) -> Result<SecOutput, String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -80,7 +86,10 @@ async fn run_sec(args: Vec<String>, stdin: Option<String>) -> Result<SecOutput, 
         if out.status.success() {
             Ok(SecOutput { stdout, stderr })
         } else {
-            let msg = clean_stderr(&stderr);
+            let mut msg = clean_stderr(&stderr);
+            if msg.is_empty() {
+                msg = envelope_error(&stdout).unwrap_or_default();
+            }
             if msg.is_empty() {
                 Err(format!("sec завершился с кодом {}", out.status.code().unwrap_or(-1)))
             } else {

@@ -7,7 +7,6 @@ package command
 
 import (
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 
@@ -95,6 +94,6 @@ func linkHintCmd(self string, candidates []dupeEntry) string {
 // printDupeHints — обёртка для команд записи: печатает подсказки в stderr.
 func printDupeHints(st *store.Store, mkey []byte, proj string, written ...string) {
 	for _, h := range dupeHints(st, mkey, proj, written) {
-		fmt.Fprintf(os.Stderr, "sec: %s\n", h)
+		warnf("%s", h)
 	}
 }

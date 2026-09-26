@@ -85,7 +85,7 @@ func readHidden(prompt string) (string, error) {
 		case <-sig:
 			restore()
 			fmt.Fprintln(out)
-			os.Exit(130)
+			interrupted()
 		case <-done:
 		}
 	}()

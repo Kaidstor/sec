@@ -58,7 +58,7 @@ func sshRun(host, remote string, stdin []byte) (stdout []byte, stderr string, er
 // (deploy --after: рестарт сервиса хочется видеть вживую, а не постфактум).
 func sshStream(host, remote string) error {
 	cmd := exec.Command("ssh", "--", host, remote)
-	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	cmd.Stdout, cmd.Stderr = childStdout(), os.Stderr
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("ssh %s: %w", host, err)
 	}

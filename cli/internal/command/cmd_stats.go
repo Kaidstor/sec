@@ -6,8 +6,6 @@ package command
 // для автодополнения (completionSubcommands / completionFlags).
 
 import (
-	"encoding/json"
-	"flag"
 	"fmt"
 	"sort"
 	"strings"
@@ -17,12 +15,12 @@ import (
 )
 
 func statsCommand(args []string) int {
-	fs := flag.NewFlagSet("stats", flag.ExitOnError)
+	fs := newFlagSet("stats")
 	var days int
-	var all, asJSON bool
+	var all bool
+	asJSON := jsonMode
 	fs.IntVar(&days, "days", 14, "сколько последних дней показать в разбивке (0 — не показывать)")
 	fs.BoolVar(&all, "all", false, "показать и команды, которых ни разу не было (обычно только в сводке снизу)")
-	fs.BoolVar(&asJSON, "json", false, "машинный вывод JSON")
 	_ = fs.Parse(args)
 
 	u := stats.Load()
@@ -36,14 +34,13 @@ func statsCommand(args []string) int {
 			UnusedCmds  []string                  `json:"unusedCommands"`
 			UnusedFlags []string                  `json:"unusedFlags"`
 		}{stats.Path(), u.Keys, u.Days, unusedCmds, unusedFlags}
-		data, _ := json.MarshalIndent(out, "", "  ")
-		fmt.Println(string(data))
+		emit(out)
 		return 0
 	}
 
 	if len(u.Keys) == 0 {
-		fmt.Printf("счётчик пуст — %s появится после первых команд\n", stats.Path())
-		fmt.Println("(отключается переменной SEC_NO_USAGE=1)")
+		fmt.Fprintf(stdout, "счётчик пуст — %s появится после первых команд\n", stats.Path())
+		fmt.Fprintln(stdout, "(отключается переменной SEC_NO_USAGE=1)")
 		return 0
 	}
 
@@ -65,19 +62,19 @@ func statsCommand(args []string) int {
 		return rows[i].name < rows[j].name
 	})
 
-	fmt.Printf("%-12s %8s  %-12s %s\n", "команда", "запусков", "последний", "флаги, которыми пользовались")
+	fmt.Fprintf(stdout, "%-12s %8s  %-12s %s\n", "команда", "запусков", "последний", "флаги, которыми пользовались")
 	for _, r := range rows {
 		line := fmt.Sprintf("%-12s %8d  %-12s %s", r.name, r.s.N, shortDay(r.s.Last), usedFlagsOf(u, r.name))
-		fmt.Println(strings.TrimRight(line, " "))
+		fmt.Fprintln(stdout, strings.TrimRight(line, " "))
 	}
 	if all {
 		for _, c := range unusedCmds {
-			fmt.Printf("%-12s %8s  %-12s\n", c, "—", "ни разу")
+			fmt.Fprintf(stdout, "%-12s %8s  %-12s\n", c, "—", "ни разу")
 		}
 	}
 
 	if days > 0 {
-		fmt.Printf("\nпо дням (последние %d):\n", days)
+		fmt.Fprintf(stdout, "\nпо дням (последние %d):\n", days)
 		shown := 0
 		for _, d := range u.SortedDays() {
 			if shown >= days {
@@ -89,22 +86,22 @@ func statsCommand(args []string) int {
 			for _, n := range counts {
 				total += n
 			}
-			fmt.Printf("  %s  %4d   %s\n", shortDay(d), total, topOfDay(counts))
+			fmt.Fprintf(stdout, "  %s  %4d   %s\n", shortDay(d), total, topOfDay(counts))
 		}
 		if shown == 0 {
-			fmt.Println("  пусто")
+			fmt.Fprintln(stdout, "  пусто")
 		}
 	}
 
-	fmt.Println()
+	fmt.Fprintln(stdout)
 	if len(unusedCmds) > 0 {
-		fmt.Printf("ни разу не использовались команды (%d): %s\n", len(unusedCmds), strings.Join(unusedCmds, ", "))
+		fmt.Fprintf(stdout, "ни разу не использовались команды (%d): %s\n", len(unusedCmds), strings.Join(unusedCmds, ", "))
 	}
 	if len(unusedFlags) > 0 {
-		fmt.Printf("ни разу не использовались флаги (%d): %s\n", len(unusedFlags), strings.Join(unusedFlags, ", "))
+		fmt.Fprintf(stdout, "ни разу не использовались флаги (%d): %s\n", len(unusedFlags), strings.Join(unusedFlags, ", "))
 	}
 	if len(unusedCmds) == 0 && len(unusedFlags) == 0 {
-		fmt.Println("использовано всё, что есть в CLI")
+		fmt.Fprintln(stdout, "использовано всё, что есть в CLI")
 	}
 	return 0
 }

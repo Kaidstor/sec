@@ -17,13 +17,12 @@ import (
 	"github.com/kaidstor/sec/internal/store"
 
 	"encoding/json"
-	"flag"
 	"fmt"
 	"os"
 )
 
 func syncCommand(args []string) int {
-	fs := flag.NewFlagSet("sync", flag.ExitOnError)
+	fs := newFlagSet("sync")
 	var file string
 	fs.StringVar(&file, "file", "", "общий зашифрованный блоб (обязателен)")
 	_ = fs.Parse(args)
@@ -34,7 +33,7 @@ func syncCommand(args []string) int {
 	blob, readErr := os.ReadFile(file)
 	fresh := os.IsNotExist(readErr)
 	if readErr != nil && !fresh {
-		die("чтение %s: %v", file, readErr)
+		dieK(kindIO, "чтение %s: %v", file, readErr)
 	}
 
 	pass, err := readPassphrase(fresh) // при первом создании — с подтверждением
@@ -46,50 +45,51 @@ func syncCommand(args []string) int {
 	defer unlock()
 	st, mkey, _, err := store.Open(true)
 	if err != nil {
-		die("%v", err)
+		dieStore(err)
 	}
 
 	added, updated := 0, 0
 	if !fresh {
 		pt, err := backup.Open(blob, pass)
 		if err != nil {
-			die("%v", err)
+			dieK(kindAuth, "%v", err)
 		}
 		var remote store.Store
 		if err := json.Unmarshal(pt, &remote); err != nil {
-			die("блоб повреждён: %v", err)
+			dieK(kindIO, "блоб повреждён: %v", err)
 		}
 		if remote.Projects == nil {
 			remote.Projects = map[string]map[string]store.Secret{}
 		}
 		added, updated = store.Merge(st, &remote)
 		if err := store.Save(st, mkey); err != nil {
-			die("запись локального хранилища: %v", err)
+			dieK(kindStore, "запись локального хранилища: %v", err)
 		}
 	}
 
 	// push: сводный локальный стор обратно в блоб (атомарно)
 	pt, err := json.Marshal(st)
 	if err != nil {
-		die("%v", err)
+		dieK(kindStore, "%v", err)
 	}
 	sealed, err := backup.Seal(pt, pass)
 	if err != nil {
-		die("%v", err)
+		dieK(kindStore, "%v", err)
 	}
 	tmp := file + ".tmp"
 	if err := os.WriteFile(tmp, sealed, 0o600); err != nil {
-		die("запись %s: %v", tmp, err)
+		dieK(kindIO, "запись %s: %v", tmp, err)
 	}
 	if err := os.Rename(tmp, file); err != nil {
-		die("замена %s: %v", file, err)
+		dieK(kindIO, "замена %s: %v", file, err)
 	}
 
 	audit.Record("sync", "*", "↔ "+file)
 	if fresh {
-		fmt.Printf("создан общий блоб %s из локального стора\n", file)
+		fmt.Fprintf(stdout, "создан общий блоб %s из локального стора\n", file)
 	} else {
-		fmt.Printf("синхронизировано с %s: подтянуто новых %d, обновлено %d, отправлен сводный стор\n", file, added, updated)
+		fmt.Fprintf(stdout, "синхронизировано с %s: подтянуто новых %d, обновлено %d, отправлен сводный стор\n", file, added, updated)
 	}
+	emit(map[string]any{"file": file, "created": fresh, "added": added, "updated": updated})
 	return 0
 }

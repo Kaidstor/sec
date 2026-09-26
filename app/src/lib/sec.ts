@@ -81,19 +81,32 @@ export function keyArgs(cmd: string, project: string, key: string, ...extra: str
   return [cmd, `${project}/${key}`, ...extra];
 }
 
+// sec --json отдаёт конверт {v, command, exit, data, warning, error}; CLI до
+// конверта печатал голые данные. Принимаются обе формы: приложение и CLI
+// обновляются порознь.
+export function parseSecJSON<T>(out: string, empty: T): T {
+  if (!out.trim()) return empty;
+  const v = JSON.parse(out);
+  if (v && typeof v === "object" && !Array.isArray(v) && "v" in v && "command" in v && "data" in v) {
+    if (v.error) throw new Error(v.error.message);
+    return (v.data ?? empty) as T;
+  }
+  return v as T;
+}
+
 export async function listSecrets(): Promise<SecretStore> {
   const out = await runSec(["ls", "--json"]);
-  return JSON.parse(out || "{}") as SecretStore;
+  return parseSecJSON<SecretStore>(out, {});
 }
 
 export async function keyHistory(project: string, key: string): Promise<HistoryVersion[]> {
   const out = await runSec(keyArgs("history", project, key, "--json"));
-  return JSON.parse(out || "[]") as HistoryVersion[];
+  return parseSecJSON<HistoryVersion[]>(out, []);
 }
 
 export async function shareLinks(): Promise<ShareLink[]> {
   const out = await runSec(["share", "ls", "--json"]);
-  return JSON.parse(out || "[]") as ShareLink[];
+  return parseSecJSON<ShareLink[]>(out, []);
 }
 
 export interface ShareResult {

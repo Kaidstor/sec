@@ -9,9 +9,7 @@ import (
 	"github.com/kaidstor/sec/internal/share"
 	"github.com/kaidstor/sec/internal/store"
 
-	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"net"
@@ -63,7 +61,7 @@ func shareConfig(st *store.Store) (baseURL, token string, ok bool) {
 func mustShareClient(st *store.Store) *share.Client {
 	baseURL, token, ok := shareConfig(st)
 	if !ok {
-		die("сервер ссылок не настроен: sec share setup <url> (или env SEC_SHARE_URL/SEC_SHARE_TOKEN)")
+		dieK(kindConfig, "сервер ссылок не настроен: sec share setup <url> (или env SEC_SHARE_URL/SEC_SHARE_TOKEN)")
 	}
 	checkShareURL(baseURL)
 	return share.NewClient(baseURL, token)
@@ -83,7 +81,7 @@ func shareCreateCommand(args []string) int {
 	if ref == "" && len(rest) > 0 && rest[0] == "-" {
 		ref, rest = "-", rest[1:]
 	}
-	fs := flag.NewFlagSet("share", flag.ExitOnError)
+	fs := newFlagSet("share")
 	var ttlStr, fromFile, only string
 	var multi, noClip, all bool
 	fs.StringVar(&ttlStr, "ttl", "24h", "срок жизни ссылки 1h…7d (сгорает по времени, даже если не открыта)")
@@ -130,7 +128,7 @@ func shareCreateCommand(args []string) int {
 			die("пак — это проект целиком: sec share <proj> --all (без /KEY)")
 		}
 		if st == nil {
-			die("%v", storeErr)
+			dieStore(storeErr)
 		}
 		proj, _ := resolveServiceProj(ref, fs)
 		keys := st.EffectiveKeys(proj)
@@ -150,7 +148,7 @@ func shareCreateCommand(args []string) int {
 		}
 		fi, serr := os.Stat(fromFile)
 		if serr != nil {
-			die("%v", serr)
+			dieK(kindIO, "%v", serr)
 		}
 		if !fi.Mode().IsRegular() {
 			die("%s — не обычный файл", fromFile)
@@ -160,12 +158,12 @@ func shareCreateCommand(args []string) int {
 		}
 		f, oerr := os.Open(fromFile)
 		if oerr != nil {
-			die("%v", oerr)
+			dieK(kindIO, "%v", oerr)
 		}
 		data, rerr := io.ReadAll(io.LimitReader(f, maxFileSecret+1))
 		f.Close()
 		if rerr != nil {
-			die("%v", rerr)
+			dieK(kindIO, "%v", rerr)
 		}
 		if len(data) > maxFileSecret {
 			die("%s: файл вырос при чтении — больше предела %d МиБ", fromFile, maxFileSecret>>20)
@@ -183,12 +181,12 @@ func shareCreateCommand(args []string) int {
 			var rerr error
 			data, rerr = io.ReadAll(io.LimitReader(os.Stdin, maxFileSecret+1))
 			if rerr != nil {
-				die("stdin: %v", rerr)
+				dieK(kindIO, "stdin: %v", rerr)
 			}
 		} else {
 			s, herr := readHidden("значение для ссылки: ")
 			if herr != nil {
-				die("%v", herr)
+				dieK(kindIO, "%v", herr)
 			}
 			data = []byte(s)
 		}
@@ -204,18 +202,18 @@ func shareCreateCommand(args []string) int {
 	default:
 		proj, key := resolveKeyRef(ref, fs, "sec share <proj>/<KEY> | - | --file <путь>")
 		if st == nil {
-			die("%v", storeErr)
+			dieStore(storeErr)
 		}
 		sec, org, source, ok := st.Lookup(proj, key)
 		if !ok {
 			if org == store.OriginRef {
-				die("%s/%s ссылается на %s, но значения по цепочке нет (родитель удалён?)", proj, key, source)
+				dieK(kindConflict, "%s/%s ссылается на %s, но значения по цепочке нет (родитель удалён?)", proj, key, source)
 			}
 			dieNotFound("нет %s/%s (смотри: sec ls %s)", proj, key, proj)
 		}
 		raw, berr := sec.Bytes()
 		if berr != nil {
-			die("%s/%s: %v", proj, key, berr)
+			dieK(kindStore, "%s/%s: %v", proj, key, berr)
 		}
 		// файловые и бинарные секреты, в отличие от get --once, разрешены:
 		// значение едет шифроблобом, в терминал не печатается
@@ -240,15 +238,15 @@ func shareCreateCommand(args []string) int {
 	client := mustShareClient(st)
 	key, err := share.NewKey()
 	if err != nil {
-		die("%v", err)
+		dieK(kindIO, "%v", err)
 	}
 	blob, err := share.Encode(key, env)
 	if err != nil {
-		die("%v", err)
+		dieK(kindIO, "%v", err)
 	}
 	id, expiresAt, err := client.Create(blob, ttl, !multi)
 	if err != nil {
-		die("%v", err)
+		dieShare(err)
 	}
 	link := share.SecretURL(client.BaseURL, id, key)
 
@@ -259,18 +257,24 @@ func shareCreateCommand(args []string) int {
 	audit.Record("share", target, fmt.Sprintf("→ %s, id=%s, ttl=%s, %s", hostOf(client.BaseURL), id, ttlStr, mode))
 
 	// URL — в stdout (подставляется в $(...)), пояснение — в stderr
-	fmt.Println(link)
+	fmt.Fprintln(stdout, link)
 	until := expiresAt.Local().Format("2006-01-02 15:04")
 	msg := fmt.Sprintf("одноразовая ссылка: сгорит при первом открытии или %s", until)
 	if multi {
 		msg = fmt.Sprintf("многоразовая ссылка: живёт до %s", until)
 	}
+	copied := false
 	if !noClip {
 		if cerr := clipboardWrite(link); cerr == nil {
 			msg += "; скопирована в буфер обмена"
+			copied = true
 		}
 	}
-	fmt.Fprintln(os.Stderr, "sec: "+msg)
+	if !jsonMode { // в JSON то же самое — поля expiresAt, once, clipboard
+		fmt.Fprintln(os.Stderr, "sec: "+msg)
+	}
+	emit(map[string]any{"url": link, "id": id, "target": target, "once": !multi,
+		"expiresAt": expiresAt.Format(time.RFC3339), "clipboard": copied})
 	return 0
 }
 
@@ -339,7 +343,7 @@ func packEntries(keys map[string]store.Secret, only string) ([]share.PackEntry, 
 }
 
 func shareSetupCommand(args []string) int {
-	fs := flag.NewFlagSet("share setup", flag.ExitOnError)
+	fs := newFlagSet("share setup")
 	var forget bool
 	fs.BoolVar(&forget, "forget", false, "забыть сохранённые адрес и токен")
 	_ = fs.Parse(args)
@@ -349,17 +353,18 @@ func shareSetupCommand(args []string) int {
 		defer unlock()
 		st, mkey, _, err := store.Open(false)
 		if err != nil {
-			die("%v", err)
+			dieStore(err)
 		}
 		if _, ok := st.Projects[shareConfigProject]; !ok {
-			die("share не настроен — забывать нечего")
+			dieK(kindConfig, "share не настроен — забывать нечего")
 		}
 		delete(st.Projects, shareConfigProject)
 		if err := store.Save(st, mkey); err != nil {
-			die("запись хранилища: %v", err)
+			dieK(kindStore, "запись хранилища: %v", err)
 		}
 		audit.Record("share-setup", "", "forget")
-		fmt.Println("настройки share удалены из стора")
+		fmt.Fprintln(stdout, "настройки share удалены из стора")
+		emit(map[string]any{"forgotten": true})
 		return 0
 	}
 
@@ -374,13 +379,13 @@ func shareSetupCommand(args []string) int {
 	if stdinPiped() {
 		data, err := io.ReadAll(os.Stdin)
 		if err != nil {
-			die("stdin: %v", err)
+			dieK(kindIO, "stdin: %v", err)
 		}
 		token = strings.TrimSpace(string(data))
 	} else {
 		t, err := readHidden("токен (выпускается на сервере: sec-share token add <имя>): ")
 		if err != nil {
-			die("%v", err)
+			dieK(kindIO, "%v", err)
 		}
 		token = strings.TrimSpace(t)
 	}
@@ -390,23 +395,24 @@ func shareSetupCommand(args []string) int {
 
 	// проверка до сохранения: адрес достижим и токен принят
 	if _, err := share.NewClient(baseURL, token).List(); err != nil {
-		die("проверка не прошла: %v", err)
+		dieK(shareErrKind(err), "проверка не прошла: %v", err)
 	}
 
 	unlock := store.Lock()
 	defer unlock()
 	st, mkey, _, err := store.Open(true)
 	if err != nil {
-		die("%v", err)
+		dieStore(err)
 	}
 	keys := st.Project(shareConfigProject)
 	store.Put(keys, "URL", baseURL)
 	store.Put(keys, "TOKEN", token)
 	if err := store.Save(st, mkey); err != nil {
-		die("запись хранилища: %v", err)
+		dieK(kindStore, "запись хранилища: %v", err)
 	}
 	audit.Record("share-setup", hostOf(baseURL), "")
-	fmt.Printf("подключено: %s (токен в зашифрованном сторе)\n", baseURL)
+	fmt.Fprintf(stdout, "подключено: %s (токен в зашифрованном сторе)\n", baseURL)
+	emit(map[string]any{"url": baseURL})
 	return 0
 }
 
@@ -435,8 +441,7 @@ func checkShareURL(baseURL string) {
 }
 
 func shareLsCommand(args []string) int {
-	fs := flag.NewFlagSet("share ls", flag.ExitOnError)
-	jsonOut := fs.Bool("json", false, "машиночитаемый вывод")
+	fs := newFlagSet("share ls")
 	_ = fs.Parse(args)
 
 	var st *store.Store
@@ -445,9 +450,9 @@ func shareLsCommand(args []string) int {
 	}
 	links, err := mustShareClient(st).List()
 	if err != nil {
-		die("%v", err)
+		dieShare(err)
 	}
-	if *jsonOut {
+	if jsonMode {
 		type row struct {
 			ID        string `json:"id"`
 			CreatedAt string `json:"createdAt"`
@@ -463,13 +468,11 @@ func shareLsCommand(args []string) int {
 				ExpiresAt: l.ExpiresAt.Format(time.RFC3339),
 			})
 		}
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		_ = enc.Encode(rows)
+		emit(rows)
 		return 0
 	}
 	if len(links) == 0 {
-		fmt.Println("активных ссылок нет")
+		fmt.Fprintln(stdout, "активных ссылок нет")
 		return 0
 	}
 	for _, l := range links {
@@ -477,25 +480,25 @@ func shareLsCommand(args []string) int {
 		if !l.Once {
 			mode = "multi"
 		}
-		fmt.Printf("%-24s %s  до %s  %-5s просмотров: %d\n",
+		fmt.Fprintf(stdout, "%-24s %s  до %s  %-5s просмотров: %d\n",
 			l.ID,
 			l.CreatedAt.Local().Format("2006-01-02 15:04"),
 			l.ExpiresAt.Local().Format("2006-01-02 15:04"),
 			mode, l.Claims)
 	}
-	fmt.Fprintln(os.Stderr, "sec: URL восстановить нельзя — ключ расшифровки существовал только в момент создания")
+	warnf("URL восстановить нельзя — ключ расшифровки существовал только в момент создания")
 	return 0
 }
 
 func shareRevokeCommand(args []string) int {
-	fs := flag.NewFlagSet("share revoke", flag.ExitOnError)
+	fs := newFlagSet("share revoke")
 	_ = fs.Parse(args)
 	arg := fs.Arg(0)
 	if arg == "" && stdinPiped() {
 		// URL целиком = секрет: через stdin он не оседает в истории shell
 		data, err := io.ReadAll(os.Stdin)
 		if err != nil {
-			die("stdin: %v", err)
+			dieK(kindIO, "stdin: %v", err)
 		}
 		arg = strings.TrimSpace(string(data))
 	}
@@ -511,9 +514,28 @@ func shareRevokeCommand(args []string) int {
 		st = s
 	}
 	if err := mustShareClient(st).Revoke(id); err != nil {
-		die("%v", err)
+		dieShare(err)
 	}
 	audit.Record("share-revoke", id, "")
-	fmt.Printf("ссылка %s отозвана\n", id)
+	fmt.Fprintf(stdout, "ссылка %s отозвана\n", id)
+	emit(map[string]any{"id": id, "revoked": true})
 	return 0
+}
+
+// shareErrKind — класс ошибки share-сервера: не достучались (network),
+// не принят токен (auth), прочий отказ сервера (api).
+func shareErrKind(err error) string {
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		return kindNetwork
+	}
+	var se *share.StatusError
+	if errors.As(err, &se) && se.Code == 401 {
+		return kindAuth
+	}
+	return kindAPI
+}
+
+func dieShare(err error) {
+	dieK(shareErrKind(err), "%v", err)
 }
