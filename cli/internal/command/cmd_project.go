@@ -331,12 +331,10 @@ func runCommand(args []string) int {
 			break
 		}
 	}
-	if sep < 0 {
-		die("нужен разделитель --: sec run [proj] [--only A,B] [--file KEY[:путь]] -- cmd args...")
-	}
-	head, tail := args[:sep], args[sep+1:]
-	if len(tail) == 0 {
-		die("нет команды после --")
+	head := args
+	var tail []string
+	if sep >= 0 {
+		head, tail = args[:sep], args[sep+1:]
 	}
 
 	service, rest := splitArgs(head)
@@ -349,6 +347,12 @@ func runCommand(args []string) int {
 	fs.BoolVar(&includeFiles, "include-files", false, "инжектить в env и файловые (kind: file) ключи — по умолчанию пропускаются")
 	fs.Var(&mountSpecs, "file", "материализовать файловый секрет во временный файл: [ENV=]<KEY|proj/KEY>[:путь], путь уйдёт в env-переменную (повторяемый)")
 	_ = fs.Parse(rest)
+	if sep < 0 {
+		die("нужен разделитель --: sec run [proj] [--only A,B] [--file KEY[:путь]] -- cmd args...")
+	}
+	if len(tail) == 0 {
+		die("нет команды после --")
+	}
 	proj, _ := resolveServiceProj(service, fs)
 
 	mounts, err := parseFileMounts(mountSpecs, proj)
