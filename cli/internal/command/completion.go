@@ -81,7 +81,7 @@ var completionFlags = map[string][]string{
 	"push":    {"--to-infisical", "--infisical-env", "--path", "--only"},
 	"check":   {"--file", "--all-profiles"},
 	"scan":    {"--staged", "--min", "--history", "--include-config"},
-	"redact":  {"--min", "--history", "--include-config", "--mask", "--file"},
+	"redact":  {"--min", "--history", "--include-config", "--mask", "--file", "--store-only", "--strict"},
 	"render":  {"--file", "--proj"},
 	"share":   {"--ttl", "--multi", "--file", "--no-clip"},
 	"backup":  {"--file"},

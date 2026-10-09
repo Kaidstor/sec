@@ -330,7 +330,8 @@ Windows Credential Manager (fallback: env SEC_KEY / файл).
   sec share ls | revoke <id|url>       активные ссылки / досрочно отозвать
   sec share setup <url>                подключить сервер ссылок (токен — скрытым вводом)
   sec scan <path...|-|--staged>        найти сохранённые значения в файлах/диффе
-  sec redact <path...|->                вычистить сохранённые значения из текста → stdout
+  sec redact <path...|-> [--strict]    вычистить секреты из текста → stdout: значения стора
+                                       и правила (поля *_TOKEN/*_PASSWORD, пароль в URI, PEM)
   sec render <tpl> --file <out>        шаблон с {{ secret "proj/KEY" }} → файл
   sec stale [proj] [--older-than 90d]  какие секреты пора ротировать
   sec doctor                           здоровье хранилища (права, дубли, ротация)
@@ -442,7 +443,8 @@ cancelled, interrupted.
 Коды выхода:
   0    сделано
   1    ответ «нет»: verify — не совпало, find — ничего не нашлось, scan — есть
-       значения секретов, doctor — есть проблемы, deploy — не подтверждено
+       значения секретов, redact --strict — нашлись секреты не из стора,
+       doctor — есть проблемы, deploy — не подтверждено
   2    ошибка аргументов, хранилища, файла, сети или сервера ссылок; у гейтов
        check / diff / stale — ещё и «не сходится» (не хватает ключей, есть
        различия, пора ротировать): причина — в data, error пуст

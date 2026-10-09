@@ -68,7 +68,7 @@ sec import whois path/to/.env
 cat creds.json | sec import whois
 
 # safely show command output that might contain a secret
-just dev 2>&1 | sec redact       # values → [redacted:proj/KEY]
+just dev 2>&1 | sec redact       # values → [redacted:proj/KEY], unknown BOT_TOKEN=… → [redacted:field]
 
 # before committing, check that no secret leaked into the index
 sec scan --staged
@@ -108,7 +108,9 @@ sec scan --staged
 - **History and rotation** — `history`, `undo`/`redo`, `forget`, rotation
   metadata (`meta`, `stale`), store health (`doctor`).
 - **Leak protection** — `scan` (find stored values in files / a git diff)
-  and `redact` (scrub them out of arbitrary text → safe output). Values
+  and `redact` (scrub them out of arbitrary text; on top of stored values it
+  hides fields named like `*_TOKEN`/`*_PASSWORD`, passwords in URIs and PEM
+  private keys — a heuristic, not a DLP guarantee). Values
   marked `--kind config` (an endpoint, a cache size, a provider list) are
   not secrets: `scan`/`redact` skip them (`--include-config` brings them
   back) and `diff`/`deploy` show them in plain text.

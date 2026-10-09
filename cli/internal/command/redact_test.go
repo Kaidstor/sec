@@ -18,14 +18,19 @@ func redactStore() *store.Store {
 
 func redactText(t *testing.T, st *store.Store, in string, minLen int, withHistory, mask bool) (string, map[string]bool) {
 	t.Helper()
-	values, _ := collectStoreValues(st, storeScope{minLen: minLen, withHistory: withHistory})
-	repls := buildReplacements(values, mask)
+	out, rd := runRedactor(t, st, in, storeScope{minLen: minLen, withHistory: withHistory}, mask, true)
+	return out, rd.hit
+}
+
+func runRedactor(t *testing.T, st *store.Store, in string, sc storeScope, mask, rules bool) (string, *redactor) {
+	t.Helper()
+	values, _ := collectStoreValues(st, sc)
+	rd := newRedactor(buildReplacements(values, mask), rules)
 	var buf bytes.Buffer
-	hit := map[string]bool{}
-	if err := redactReader(strings.NewReader(in), &buf, repls, hit); err != nil {
-		t.Fatalf("redactReader: %v", err)
+	if err := rd.copy(strings.NewReader(in), &buf); err != nil {
+		t.Fatalf("redactor.copy: %v", err)
 	}
-	return buf.String(), hit
+	return buf.String(), rd
 }
 
 func TestRedactReplacesValues(t *testing.T) {

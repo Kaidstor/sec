@@ -1,19 +1,23 @@
 package command
 
-// redact: вычистить сохранённые значения секретов из произвольного текста —
-// чтобы безопасно показать лог/дифф/вывод команды, не рискуя утащить значение
-// в чат агента. В отличие от scan (который только находит утечки и падает
-// ненулевым кодом), redact отдаёт очищенный текст: каждое встреченное значение
-// заменяется на [redacted:proj/KEY]. Вывод по построению безопасен — секретов
-// в нём не остаётся.
+// redact: вычистить секреты из произвольного текста — чтобы показать лог/дифф/
+// вывод команды, не утащив значение в чат агента. В отличие от scan (который
+// только находит утечки и падает ненулевым кодом), redact отдаёт очищенный
+// текст. Два слоя:
+//
+//   - значения из стора → [redacted:proj/KEY];
+//   - правила для того, чего в сторе нет (redact_rules.go): значение поля с
+//     секретным именем → [redacted:field], пароль в URI → [redacted:uri], тело
+//     приватного PEM-ключа → [redacted:pem]. Выключаются --store-only.
 //
 //	cmd 2>&1 | sec redact                очистить stdin → stdout
 //	sec redact app.log other.log         очистить файлы → stdout
 //	sec redact app.log --file safe.log   записать результат в файл
+//	sec redact --strict <dump.json       код 1, если нашлись секреты не из стора
 //
-// Как и scan, redact знает только значения, лежащие в сторе: секрет, которого
-// в sec нет, он не увидит. Это не универсальный DLP, а страховка от утечки
-// собственных сохранённых значений.
+// Полноты redact не гарантирует: секрет в поле с невинным именем и формат,
+// которого правила не знают, пройдут как есть. Приватный документ целиком через
+// redact не показывать — выбирать из него нужные поля программно.
 
 import (
 	"github.com/kaidstor/sec/internal/audit"
@@ -37,18 +41,23 @@ type replacement struct {
 func redactCommand(args []string) int {
 	fs := newFlagSet("redact")
 	var minLen int
-	var withHistory, mask, includeConfig bool
+	var withHistory, mask, includeConfig, storeOnly, strict bool
 	var outFile string
 	fs.IntVar(&minLen, "min", 8, "игнорировать значения короче N символов (шум)")
 	fs.BoolVar(&withHistory, "history", false, "чистить и прошлые значения из истории, не только текущие")
 	fs.BoolVar(&includeConfig, "include-config", false, "чистить и несекретные значения kind: config")
-	fs.BoolVar(&mask, "mask", false, "заменять на [redacted] без имени ключа")
+	fs.BoolVar(&mask, "mask", false, "значения стора — глухим [redacted] без имени ключа")
+	fs.BoolVar(&storeOnly, "store-only", false, "только значения из стора, без правил по именам полей, URI и PEM")
+	fs.BoolVar(&strict, "strict", false, "код 1, если правила нашли секреты, которых нет в сторе")
 	fs.StringVar(&outFile, "file", "", "записать результат в файл 0600 (умолч. — stdout)")
 	// collectPositionals — чтобы флаги работали и после путей (sec redact a.log --file out).
 	paths := collectPositionals(fs, args)
 
 	if len(paths) == 0 && !stdinPiped() {
 		die("подай текст в stdin (cmd | sec redact) или укажи файлы (sec redact app.log)")
+	}
+	if strict && storeOnly {
+		die("--strict проверяет находки правил, а --store-only их выключает — выбери одно")
 	}
 
 	st, _, _, err := store.Open(false)
@@ -57,10 +66,10 @@ func redactCommand(args []string) int {
 	}
 	values, skips := collectStoreValues(st, storeScope{minLen: minLen, withHistory: withHistory, includeConfig: includeConfig})
 	reportScanSkips(skips, minLen)
-	repls := buildReplacements(values, mask)
+	rd := newRedactor(buildReplacements(values, mask), !storeOnly)
 
-	// Куда пишем результат: файл 0600 или stdout. Вывод безопасен (секретов нет),
-	// но 0600 держим консистентно с export/render.
+	// Куда пишем результат: файл 0600 или stdout. 0600 — как у export/render:
+	// полноты чистки redact не гарантирует.
 	var w io.Writer = stdout
 	if outFile != "" {
 		f, err := os.OpenFile(outFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
@@ -71,72 +80,98 @@ func redactCommand(args []string) int {
 		w = f
 	}
 
-	hit := map[string]bool{}
 	src := "stdin"
 	switch {
 	case len(paths) == 0, len(paths) == 1 && paths[0] == "-":
-		if err := redactReader(os.Stdin, w, repls, hit); err != nil {
+		if err := rd.copy(os.Stdin, w); err != nil {
 			dieK(kindIO, "чтение stdin: %v", err)
 		}
 	default:
 		src = strings.Join(paths, ", ")
 		for _, p := range paths {
-			if err := redactPath(p, w, repls, hit); err != nil {
+			if err := redactPath(p, w, rd); err != nil {
 				dieK(kindIO, "%s: %v", p, err)
 			}
 		}
 	}
 
-	report(hit)
-	audit.Record("redact", src, fmt.Sprintf("скрыто ключей: %d", len(hit)))
-	refs := make([]string, 0, len(hit))
-	for ref := range hit {
-		refs = append(refs, ref)
+	rd.report()
+	audit.Record("redact", src, fmt.Sprintf("скрыто ключей стора: %d, по правилам: %d", len(rd.hit), rd.stats.total()))
+	out := map[string]any{"hidden": store.SortedKeys(rd.hit)}
+	if rd.rules {
+		out["rules"] = map[string]any{"fields": store.SortedKeys(rd.stats.fields), "uri": rd.stats.uri, "pem": rd.stats.pem}
 	}
-	sort.Strings(refs)
-	out := map[string]any{"hidden": refs}
 	if outFile != "" {
 		out["file"] = outFile
 	} else {
 		out["text"] = captured.String() // очищенный текст: в JSON-режиме stdout — этот буфер
 	}
 	emit(out)
+	if strict && rd.stats.total() > 0 {
+		warnf("--strict: в тексте были секреты, которых нет в сторе")
+		return 1
+	}
 	return 0
 }
 
-// redactPath открывает файл (или stdin для "-") и прогоняет его через redactReader.
-func redactPath(path string, w io.Writer, repls []replacement, hit map[string]bool) error {
+func redactPath(path string, w io.Writer, rd *redactor) error {
 	if path == "-" {
-		return redactReader(os.Stdin, w, repls, hit)
+		return rd.copy(os.Stdin, w)
 	}
 	f, err := os.Open(path)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
-	return redactReader(f, w, repls, hit)
+	return rd.copy(f, w)
 }
 
-// redactReader копирует r в w построчно, заменяя каждое сохранённое значение на
-// его плейсхолдер. Читает через ReadString('\n'), поэтому длина строки не
-// ограничена (минифицированный JSON/JS не обрывается), а в памяти держится не
-// больше одной строки. Значения секретов переносов не содержат, так что
-// построчная замена корректна. Встреченные refs копятся в hit.
-func redactReader(r io.Reader, w io.Writer, repls []replacement, hit map[string]bool) error {
+// redactor — состояние чистки на весь вывод: какие ключи стора встретились,
+// что нашли правила и не внутри ли мы PEM-блока (он многострочный).
+type redactor struct {
+	repls []replacement
+	rules bool
+	hit   map[string]bool
+	stats ruleStats
+	inPEM bool
+}
+
+func newRedactor(repls []replacement, rules bool) *redactor {
+	return &redactor{repls: repls, rules: rules, hit: map[string]bool{}, stats: ruleStats{fields: map[string]int{}}}
+}
+
+func (rd *redactor) line(line string) string {
+	if rd.inPEM {
+		line, rd.inPEM = pemTail(line)
+		if rd.inPEM {
+			return ""
+		}
+	}
+	for _, rp := range rd.repls {
+		if strings.Contains(line, rp.value) {
+			line = strings.ReplaceAll(line, rp.value, rp.placeholder)
+			for _, ref := range rp.refs {
+				rd.hit[ref] = true
+			}
+		}
+	}
+	if rd.rules {
+		line, rd.inPEM = applyRules(line, &rd.stats)
+	}
+	return line
+}
+
+// copy копирует r в w построчно через line. ReadString('\n') не ограничивает
+// длину строки (минифицированный JSON/JS не обрывается), в памяти — не больше
+// одной строки. Значения стора переносов не содержат, так что построчная
+// замена для них корректна; многострочный PEM ведёт inPEM.
+func (rd *redactor) copy(r io.Reader, w io.Writer) error {
 	br := bufio.NewReader(r)
 	bw := bufio.NewWriter(w)
 	for {
 		line, err := br.ReadString('\n')
 		if len(line) > 0 {
-			for _, rp := range repls {
-				if strings.Contains(line, rp.value) {
-					line = strings.ReplaceAll(line, rp.value, rp.placeholder)
-					for _, ref := range rp.refs {
-						hit[ref] = true
-					}
-				}
-			}
-			if _, werr := bw.WriteString(line); werr != nil {
+			if _, werr := bw.WriteString(rd.line(line)); werr != nil {
 				return werr
 			}
 		}
@@ -174,29 +209,43 @@ func buildReplacements(values map[string][]string, mask bool) []replacement {
 // CLI-форма, пробелов не содержит.
 func placeholderFor(refs []string, mask bool) string {
 	if mask || len(refs) == 0 {
-		return "[redacted]"
+		return redactedTag + "]"
 	}
 	label := refs[0]
 	if len(refs) > 1 {
 		label += fmt.Sprintf("+%d", len(refs)-1)
 	}
-	return "[redacted:" + label + "]"
+	return redactedLabel(label)
 }
 
-// report печатает в stderr сводку о вычищенных ключах (имена безопасны). В
-// stdout идёт только очищенный текст, поэтому сводка не мешает пайпу.
-func report(hit map[string]bool) {
-	if jsonMode { // в JSON список скрытого — поле hidden
+// report печатает в stderr сводку (имена ключей и полей безопасны). В stdout
+// идёт только очищенный текст, поэтому сводка не мешает пайпу. «Ничего не
+// скрыто» не значит «секретов нет» — сводка говорит это прямо.
+func (rd *redactor) report() {
+	if jsonMode { // в JSON — поля hidden и rules
 		return
 	}
-	if len(hit) == 0 {
-		warnf("совпадений нет — вывод идентичен вводу")
-		return
+	if len(rd.hit) > 0 {
+		warnf("скрыто значений из стора: %d (%s)", len(rd.hit), strings.Join(store.SortedKeys(rd.hit), ", "))
 	}
-	refs := make([]string, 0, len(hit))
-	for ref := range hit {
-		refs = append(refs, ref)
+	if rd.stats.total() > 0 {
+		var parts []string
+		if len(rd.stats.fields) > 0 {
+			parts = append(parts, "поля "+strings.Join(store.SortedKeys(rd.stats.fields), ", "))
+		}
+		if rd.stats.uri > 0 {
+			parts = append(parts, fmt.Sprintf("пароли в URI: %d", rd.stats.uri))
+		}
+		if rd.stats.pem > 0 {
+			parts = append(parts, fmt.Sprintf("PEM-ключи: %d", rd.stats.pem))
+		}
+		warnf("скрыто по правилам, в сторе этих значений нет: %s", strings.Join(parts, "; "))
 	}
-	sort.Strings(refs)
-	warnf("скрыто ключей: %d (%s)", len(hit), strings.Join(refs, ", "))
+	if len(rd.hit) == 0 && rd.stats.total() == 0 {
+		if rd.rules {
+			warnf("ничего не скрыто — вывод идентичен вводу. Секрет в поле с невинным именем redact не видит")
+		} else {
+			warnf("значений из стора нет — вывод идентичен вводу; с --store-only секреты не из стора не ищутся")
+		}
+	}
 }

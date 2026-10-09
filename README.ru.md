@@ -58,7 +58,7 @@ sec import whois path/to/.env
 cat creds.json | sec import whois
 
 # безопасно показать вывод команды, в котором может быть секрет
-just dev 2>&1 | sec redact       # значения → [redacted:proj/KEY]
+just dev 2>&1 | sec redact       # значения → [redacted:proj/KEY], чужой BOT_TOKEN=… → [redacted:field]
 
 # проверить перед коммитом, что секрет не утёк в индекс
 sec scan --staged
@@ -97,7 +97,9 @@ sec scan --staged
 - **История и ротация** — `history`, `undo`/`redo`, `forget`, метаданные
   ротации (`meta`, `stale`), здоровье стора (`doctor`).
 - **Защита от утечки** — `scan` (найти сохранённые значения в файлах / git-диффе)
-  и `redact` (вычистить их из произвольного текста → безопасный вывод).
+  и `redact` (вычистить их из произвольного текста; сверх значений стора
+  скрывает поля вида `*_TOKEN`/`*_PASSWORD`, пароли в URI и PEM-ключи — это
+  эвристика, а не гарантия полной очистки).
   Значения, помеченные `--kind config` (endpoint, размер кэша, список
   провайдеров), не секреты: их `scan`/`redact` не ищут (`--include-config`
   вернёт), а `diff`/`deploy` показывают открытым текстом.
