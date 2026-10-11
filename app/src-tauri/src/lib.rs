@@ -1,6 +1,6 @@
 use serde::Serialize;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use tauri::Manager;
 
@@ -41,6 +41,79 @@ fn sec_binary() -> Result<PathBuf, String> {
         }
     }
     Err("бинарь sec не найден. Установи: brew install kaidstor/tap/sec — или задай путь в SEC_BIN.".into())
+}
+
+const CLI_CASK: &str = "kaidstor/tap/sec";
+
+fn brew_binary() -> Option<PathBuf> {
+    ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"]
+        .iter()
+        .map(PathBuf::from)
+        .find(|p| p.is_file())
+}
+
+/// /opt/homebrew/bin/sec — симлинк в Caskroom; бинарь из go install или
+/// ручной копии brew не обновит, даже если сам brew установлен.
+fn installed_via_cask(sec: &Path) -> bool {
+    std::fs::canonicalize(sec)
+        .map(|p| p.to_string_lossy().contains("/Caskroom/sec/"))
+        .unwrap_or(false)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CliInstall {
+    path: String,
+    upgradable: bool,
+}
+
+#[tauri::command]
+fn cli_install() -> Result<CliInstall, String> {
+    let sec = sec_binary()?;
+    Ok(CliInstall {
+        upgradable: brew_binary().is_some() && installed_via_cask(&sec),
+        path: sec.to_string_lossy().into_owned(),
+    })
+}
+
+#[tauri::command]
+async fn upgrade_cli() -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let sec = sec_binary()?;
+        if !installed_via_cask(&sec) {
+            return Err(format!(
+                "sec установлен не через Homebrew ({}) — обнови его тем же способом, каким ставил",
+                sec.display()
+            ));
+        }
+        let brew = brew_binary().ok_or("brew не найден в /opt/homebrew и /usr/local")?;
+        let brew_dir = brew
+            .parent()
+            .map(|d| d.display().to_string())
+            .unwrap_or_default();
+        let out = Command::new(&brew)
+            .args(["upgrade", "--cask", CLI_CASK])
+            // у приложения из Finder PATH без brew, а brew зовёт git и curl
+            .env("PATH", format!("{brew_dir}:/usr/bin:/bin:/usr/sbin:/sbin"))
+            .env("HOMEBREW_NO_ENV_HINTS", "1")
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|e| format!("запуск brew: {e}"))?;
+        if out.status.success() {
+            return Ok(());
+        }
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let text = if stderr.trim().is_empty() {
+            String::from_utf8_lossy(&out.stdout)
+        } else {
+            stderr
+        };
+        let tail: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+        let tail = tail[tail.len().saturating_sub(4)..].join("\n");
+        Err(format!("brew upgrade --cask {CLI_CASK}: {tail}"))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 fn dirs_home() -> Option<PathBuf> {
@@ -213,7 +286,7 @@ pub fn run() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![run_sec, reveal_main_window, relaunch_app])
+        .invoke_handler(tauri::generate_handler![run_sec, cli_install, upgrade_cli, reveal_main_window, relaunch_app])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 // macOS: крестик прячет окно и убирает приложение из Dock

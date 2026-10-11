@@ -7,6 +7,7 @@ import { WhatsNewDialog } from "./components/WhatsNewDialog";
 import { AddSecretDialog, EditSecretDialog, GenerateSecretDialog } from "./components/dialogs/forms";
 import { HistoryDialog, LinksDialog, SettingsDialog, ShareDialog, ShareValueDialog } from "./components/dialogs/panels";
 import { ConfirmDialog, IconButton, RefreshButton, cn } from "./components/ui";
+import { MIN_CLI, cliStatus, isBelowMin } from "./lib/cliUpdate";
 import { isKey } from "./lib/keys";
 import { initUpdater } from "./lib/updater";
 import { isMac } from "./lib/platform";
@@ -25,6 +26,13 @@ export default function App() {
   useEffect(() => onWindowFocus(() => void refresh()), [refresh]);
 
   useEffect(() => initUpdater(), []);
+
+  useEffect(() => {
+    void cliStatus(false).then((s) => {
+      if (isBelowMin(s))
+        useApp.getState().showToast(`CLI sec ${s.version} старше нужного приложению ${MIN_CLI} — обнови его в Настройках (⌘,)`);
+    });
+  }, []);
 
   // Окно создано скрытым (visible: false) — показываем после коммита
   // React-дерева. Не ждать rAF: у скрытого окна WKWebView не рисует кадры,

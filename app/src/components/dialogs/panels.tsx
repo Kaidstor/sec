@@ -1,7 +1,7 @@
 import { getVersion } from "@tauri-apps/api/app";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { ArrowDown, ArrowUp, Check, CheckCircle2, Copy, Redo2, Undo2, X } from "lucide-react";
-import { CSSProperties, useCallback, useEffect, useState } from "react";
+import { ArrowDown, ArrowUp, Check, CheckCircle2, Copy, Download, Loader2, Redo2, RefreshCw, Undo2, X } from "lucide-react";
+import { ButtonHTMLAttributes, CSSProperties, useCallback, useEffect, useState } from "react";
 import {
   HistoryVersion,
   SecretEntry,
@@ -17,6 +17,7 @@ import {
   sharePack,
   shareValue,
 } from "../../lib/sec";
+import { CliStatus, MIN_CLI, cliStatus, isBelowMin, isOutdated, upgradeCli } from "../../lib/cliUpdate";
 import { THEMES, Theme } from "../../lib/themes";
 import { useUpdater } from "../../lib/updater";
 import { useApp } from "../../store";
@@ -372,20 +373,36 @@ function ThemeCard({ theme, active, onPick }: { theme: Theme; active: boolean; o
 }
 
 export function SettingsDialog() {
-  const { openDialog, themeId, setTheme } = useApp();
+  const { openDialog, themeId, setTheme, showToast } = useApp();
   const { checking, checkForUpdates } = useUpdater();
-  const [version, setVersion] = useState("");
   const [appVersion, setAppVersion] = useState("");
+  const [cli, setCli] = useState<CliStatus | null>(null);
+  const [upgrading, setUpgrading] = useState(false);
   const close = () => openDialog(null);
 
   useEffect(() => {
-    runSec(["version"])
-      .then((v) => setVersion(v.trim()))
-      .catch((err) => setVersion(String(err)));
     getVersion()
       .then(setAppVersion)
       .catch(() => {});
+    void cliStatus(true).then(setCli);
   }, []);
+
+  const upgrade = async () => {
+    setUpgrading(true);
+    try {
+      await upgradeCli();
+      const next = await cliStatus(true);
+      setCli(next);
+      showToast(next.version ? `CLI обновлён до ${next.version}` : "CLI обновлён", "success");
+    } catch (err) {
+      showToast(String(err));
+    } finally {
+      setUpgrading(false);
+    }
+  };
+
+  const outdated = cli !== null && isOutdated(cli);
+  const belowMin = cli !== null && isBelowMin(cli);
 
   return (
     <Dialog title="Настройки" onClose={close}>
@@ -400,15 +417,58 @@ export function SettingsDialog() {
         </div>
         <div>
           <div className="mb-1.5 text-[11px] font-semibold tracking-wider text-zinc-500">ВЕРСИИ</div>
-          <div className="flex items-center justify-between gap-2">
-            <div className="selectable font-mono text-[11px] text-zinc-400">
-              {appVersion && <div>app {appVersion}</div>}
-              <div>{version || "…"}</div>
+          <div className="divide-y divide-zinc-800 rounded-md border border-zinc-800">
+            <div className="flex min-h-11 items-center gap-3 px-3 py-2">
+              <div className="w-24 shrink-0 text-[12px] text-zinc-400">Приложение</div>
+              <div className="selectable flex-1 font-mono text-[13px] text-zinc-100">{appVersion || "…"}</div>
+              <RoundIconButton
+                title={checking ? "Проверка…" : "Проверить обновления"}
+                disabled={checking}
+                onClick={() => void checkForUpdates(true)}
+              >
+                <RefreshCw size={15} className={cn(checking && "animate-spin")} />
+              </RoundIconButton>
             </div>
-            <Button disabled={checking} onClick={() => void checkForUpdates(true)}>
-              {checking ? "Проверка…" : "Проверить обновления"}
-            </Button>
+            <div className="flex min-h-11 items-center gap-3 px-3 py-2">
+              <div className="w-24 shrink-0 text-[12px] text-zinc-400">CLI sec</div>
+              <div className="selectable min-w-0 flex-1">
+                {cli?.error ? (
+                  <div className="text-[12px] text-red-400" title={cli.error}>
+                    не найден
+                  </div>
+                ) : (
+                  <>
+                    <div className="font-mono text-[13px] text-zinc-100">
+                      {cli?.version ?? "…"}
+                      {outdated && cli?.latest && <span className="text-sky-400"> → {cli.latest}</span>}
+                    </div>
+                    {cli?.commit && (
+                      <div className="truncate font-mono text-[11px] text-zinc-500">
+                        {cli.commit}
+                        {cli.date && ` · ${new Date(cli.date).toLocaleDateString("ru-RU")}`}
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+              {cli && outdated && cli.upgradable && (
+                <RoundIconButton
+                  title={upgrading ? "Обновляю…" : `Обновить CLI до ${cli.latest ?? "последней"}`}
+                  disabled={upgrading}
+                  badge={!upgrading}
+                  onClick={() => void upgrade()}
+                >
+                  {upgrading ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
+                </RoundIconButton>
+              )}
+            </div>
           </div>
+          {cli && (belowMin || (outdated && !cli.upgradable)) && (
+            <div className={cn("mt-1.5 text-[11px]", belowMin ? "text-amber-400" : "text-zinc-500")}>
+              {belowMin && `Приложению нужен CLI ${MIN_CLI} или новее — часть действий будет падать с ошибкой. `}
+              {!cli.upgradable && `CLI стоит не через Homebrew (${cli.path}) — обнови его тем же способом, каким ставил.`}
+            </div>
+          )}
         </div>
         <div className="flex justify-end">
           <Button variant="primary" onClick={close}>
@@ -417,5 +477,26 @@ export function SettingsDialog() {
         </div>
       </div>
     </Dialog>
+  );
+}
+
+function RoundIconButton({
+  badge,
+  className,
+  children,
+  ...props
+}: ButtonHTMLAttributes<HTMLButtonElement> & { badge?: boolean }) {
+  return (
+    <button
+      className={cn(
+        "relative inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-800 text-zinc-300",
+        "transition-colors hover:bg-zinc-700 hover:text-zinc-100 disabled:pointer-events-none disabled:opacity-60",
+        className,
+      )}
+      {...props}
+    >
+      {children}
+      {badge && <span className="absolute top-1.5 right-1.5 h-1.5 w-1.5 rounded-full bg-sky-400 ring-2 ring-zinc-800" />}
+    </button>
   );
 }

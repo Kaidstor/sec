@@ -5,11 +5,12 @@
 // помечается fresh). Оффлайн-фолбэк: заметки, которые апдейтер отложил
 // перед перезапуском ({version, notes} в localStorage, см. updater.ts).
 import { getVersion } from "@tauri-apps/api/app";
+import { cmpVersion as cmp } from "./semver";
 
 const PENDING_KEY = "sec.pendingWhatsNew";
 const SEEN_KEY = "sec.lastSeenVersion";
 /** owner/repo — тот же проект, куда смотрит endpoint апдейтера. */
-const GITHUB_REPO = "Kaidstor/sec";
+export const GITHUB_REPO = "Kaidstor/sec";
 // В монорепо две линейки тегов: v* — CLI (goreleaser), app-v* — приложение.
 // Здесь нужны только релизы приложения.
 const TAG_PREFIX = "app-v";
@@ -35,17 +36,6 @@ export function stashPendingNotes(version: string, notes?: string) {
     // best-effort
   }
 }
-
-/** "1.2.3" → почленное числовое сравнение; пререлизы не используются. */
-const cmp = (a: string, b: string): number => {
-  const pa = a.split(".").map(Number);
-  const pb = b.split(".").map(Number);
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    const d = (pa[i] ?? 0) - (pb[i] ?? 0);
-    if (d) return d;
-  }
-  return 0;
-};
 
 /** Релизы приложения ≤ текущей версии из GitHub, новые сверху. */
 async function loadReleases(current: string): Promise<ReleaseNote[]> {
