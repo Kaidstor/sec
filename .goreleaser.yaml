@@ -85,16 +85,30 @@ homebrew_casks:
     # запускает `sec completion …` из staged_path на этапе artifacts — то есть
     # ДО postflight; с карантином этот запуск падает диалогом Gatekeeper, и
     # установка остаётся без автодополнений и без снятого карантина.
-    hooks:
-      pre:
-        install: |
-          if OS.mac?
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/sec"]
-          end
-      # Раскладка агентского скилла (sec skills install) при каждом
-      # install/upgrade: копии в ~/.claude и ~/.codex обновляются вместе с CLI.
-      post:
-        install: |
-          if OS.mac?
-            system_command "#{staged_path}/sec", args: ["skills", "install"], must_succeed: false
-          end
+    #
+    # Раскладка агентского скилла (sec skills install) при каждом
+    # install/upgrade: копии в ~/.claude и ~/.codex обновляются вместе с CLI.
+    # Шаги идут в песочнице brew с подменённым HOME: без env HOME и
+    # writable_paths скилл молча ляжет во временный каталог и пропадёт.
+    #
+    # Не через hooks: goreleaser генерирует из них preflight/postflight do…end,
+    # которые Homebrew 7 объявил устаревшими. {{staged_path}} и {{user}} —
+    # токены Homebrew, экранированы от шаблонов goreleaser.
+    custom_block: |
+      preflight_steps do
+        on_macos do
+          run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ "{{staged_path}}" }}/sec"]
+        end
+      end
+
+      postflight_steps do
+        on_macos do
+          run "{{ "{{staged_path}}" }}/sec",
+              args:           ["skills", "install"],
+              env:            { "HOME" => "/Users/{{ "{{user}}" }}" },
+              must_succeed:   false,
+              print_stdout:   true,
+              writable_paths: [".claude/skills", ".codex/skills"],
+              writable_base:  :home
+        end
+      end
