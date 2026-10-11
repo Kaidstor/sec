@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -286,6 +287,31 @@ func TestFavicon(t *testing.T) {
 	page := do(mux, "GET", "/", "", nil).Header().Get("Content-Security-Policy")
 	if !strings.Contains(page, "img-src 'self'") {
 		t.Fatalf("CSP корня без img-src: %q", page)
+	}
+}
+
+// Каждый шрифт из @font-face страниц должен отдаваться сервером и
+// пропускаться CSP: иначе браузер молча откатится на системный моноширинный.
+func TestPageFonts(t *testing.T) {
+	_, mux, _ := newTestServer(t)
+	for _, path := range []string{"/", "/s/x"} {
+		page := do(mux, "GET", path, "", nil)
+		if csp := page.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "font-src 'self'") {
+			t.Fatalf("%s: CSP без font-src: %q", path, csp)
+		}
+		urls := regexp.MustCompile(`url\((/fonts/[^)]+)\)`).FindAllStringSubmatch(page.Body.String(), -1)
+		if len(urls) == 0 {
+			t.Fatalf("%s: нет @font-face", path)
+		}
+		for _, m := range urls {
+			w := do(mux, "GET", m[1], "", nil)
+			if w.Code != http.StatusOK || w.Header().Get("Content-Type") != "font/woff2" || w.Body.Len() == 0 {
+				t.Fatalf("%s → %s: %d %q", path, m[1], w.Code, w.Header().Get("Content-Type"))
+			}
+		}
+	}
+	if w := do(mux, "GET", "/fonts/..%2Fembed.go", "", nil); w.Code != http.StatusNotFound {
+		t.Fatalf("выход из fonts/: %d", w.Code)
 	}
 }
 

@@ -4,123 +4,134 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
+<meta name="color-scheme" content="dark">
 <title>sec share — вам передали секрет</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <style>
+  /* шрифты только свои: запрос к стороннему CDN выдал бы ему каждое открытие ссылки */
+  @font-face{font-family:"JetBrains Mono";font-weight:100 800;font-display:swap;
+    src:url(/fonts/jbmono-latin.woff2) format("woff2");
+    unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
+  @font-face{font-family:"JetBrains Mono";font-weight:100 800;font-display:swap;
+    src:url(/fonts/jbmono-cyrillic.woff2) format("woff2");
+    unicode-range:U+0301,U+0400-045F,U+0490-0491,U+04B0-04B1,U+2116}
+  @font-face{font-family:"Unbounded";font-weight:900;font-display:swap;
+    src:url(/fonts/unbounded-latin.woff2) format("woff2");
+    unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
+  @font-face{font-family:"Unbounded";font-weight:900;font-display:swap;
+    src:url(/fonts/unbounded-cyrillic.woff2) format("woff2");
+    unicode-range:U+0301,U+0400-045F,U+0490-0491,U+04B0-04B1,U+2116}
+
   :root{
-    --bg:#f7f8fa; --panel:#ffffff; --ink:#1a1d24; --muted:#5b6472;
-    --line:#e5e8ee; --accent:#0f766e; --accent-soft:#0f766e14;
-    --code-bg:#f2f4f7; --code-ink:#0b3d39;
-    --warn:#9a3412; --warn-bg:#9a341214;
-    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
-  }
-  @media (prefers-color-scheme:dark){
-    :root{
-      --bg:#0d1117; --panel:#161b22; --ink:#e6edf3; --muted:#9098a5;
-      --line:#232a34; --accent:#2dd4bf; --accent-soft:#2dd4bf1a;
-      --code-bg:#0b0f14; --code-ink:#7fe9dd;
-      --warn:#fca5a5; --warn-bg:#fca5a512;
-    }
-  }
-  :root[data-theme="dark"]{
-    --bg:#0d1117; --panel:#161b22; --ink:#e6edf3; --muted:#9098a5;
-    --line:#232a34; --accent:#2dd4bf; --accent-soft:#2dd4bf1a;
-    --code-bg:#0b0f14; --code-ink:#7fe9dd;
-    --warn:#fca5a5; --warn-bg:#fca5a512;
-  }
-  :root[data-theme="light"]{
-    --bg:#f7f8fa; --panel:#ffffff; --ink:#1a1d24; --muted:#5b6472;
-    --line:#e5e8ee; --accent:#0f766e; --accent-soft:#0f766e14;
-    --code-bg:#f2f4f7; --code-ink:#0b3d39;
-    --warn:#9a3412; --warn-bg:#9a341214;
+    --void:#0d0221; --ink:#e4dcff; --dim:#8f7fbf; --deep:#5b4a8f; --rule:#3a2a6b;
+    --hot:#ff2a6d; --ice:#05d9e8;
+    --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
   }
   *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--ink);
-    font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-    -webkit-font-smoothing:antialiased;}
-  .wrap{max-width:640px;margin:0 auto;padding:0 20px 60px}
-  header{padding:48px 0 24px}
-  .logo{display:inline-flex;align-items:baseline;gap:12px;flex-wrap:wrap}
-  .logo h1{font:800 34px/1 var(--mono);letter-spacing:-1px;margin:0}
-  .logo .dot{color:var(--accent)}
-  .tag{color:var(--muted);font-size:15px}
-  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px}
-  .card p{margin:0 0 12px}
-  .muted{color:var(--muted);font-size:14px}
-  .warnbox{border-left:3px solid var(--warn);background:var(--warn-bg);
-    padding:10px 14px;border-radius:0 10px 10px 0;font-size:14.5px;margin:0 0 16px}
-  button{font:600 15px/1 inherit;border:0;border-radius:10px;padding:13px 18px;cursor:pointer}
-  #reveal{background:var(--accent);color:#fff;width:100%}
-  #reveal:disabled{opacity:.6;cursor:default}
-  .actions{display:flex;gap:10px;margin-top:12px;flex-wrap:wrap}
-  .actions button,.actions a{background:var(--accent-soft);color:var(--accent);
-    border:1px solid var(--line);border-radius:10px;padding:10px 16px;
-    font:600 14px/1 inherit;text-decoration:none;cursor:pointer;display:inline-block}
-  pre{font-family:var(--mono);font-size:13.5px;line-height:1.55;background:var(--code-bg);
-    color:var(--code-ink);border-radius:10px;padding:14px;margin:0;
-    white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-all;max-height:50vh;overflow-y:auto}
-  .file{display:flex;align-items:center;gap:10px;background:var(--code-bg);
-    border-radius:10px;padding:14px;font-family:var(--mono);font-size:14px;color:var(--code-ink)}
-  .rows{display:flex;flex-direction:column;gap:8px}
-  .row{display:flex;align-items:center;gap:10px;background:var(--code-bg);
-    border-radius:10px;padding:10px 14px;font-family:var(--mono);font-size:13.5px;color:var(--code-ink)}
-  .row .k{flex:1;overflow-wrap:anywhere;min-width:0}
-  .row .kind{color:var(--muted);font-size:12px}
-  .row button,.row a{background:var(--accent-soft);color:var(--accent);border:1px solid var(--line);
-    border-radius:8px;padding:6px 10px;font:600 12.5px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
-    text-decoration:none;cursor:pointer;white-space:nowrap}
-  #packname{font-family:var(--mono);color:var(--accent)}
-  #error{border-left:3px solid var(--warn);background:var(--warn-bg);color:var(--warn);
-    padding:12px 16px;border-radius:0 10px 10px 0;margin:0}
-  .toggle{position:fixed;top:16px;right:16px;background:var(--panel);border:1px solid var(--line);
-    color:var(--muted);border-radius:10px;padding:7px 11px;font-size:13px;cursor:pointer}
-  footer{margin-top:36px;color:var(--muted);font-size:13px}
-  footer a{color:var(--accent)}
+  html{background:var(--void)}
+  /* лигатуры JetBrains Mono превращают != и -> в значениях секретов в ≠ и → */
+  body{margin:0;min-height:100vh;color:var(--ink);font:15px/1.6 var(--mono);
+    font-variant-ligatures:none;font-feature-settings:"calt" 0,"liga" 0;
+    -webkit-font-smoothing:antialiased;
+    background:
+      repeating-linear-gradient(0deg,#ffffff06 0 1px,transparent 1px 3px),
+      radial-gradient(90% 60% at 80% -10%,#2a0b4d 0%,transparent 60%),
+      var(--void)}
+  .wrap{max-width:680px;margin:0 auto;padding:0 22px 64px}
+  header{padding:56px 0 8px}
+  h1{font:900 clamp(30px,7vw,46px)/1 "Unbounded",var(--mono);letter-spacing:-1px;margin:0;color:#fff;
+    text-shadow:-2px 0 var(--hot),2px 0 var(--ice);overflow-wrap:anywhere}
+  .sub{color:var(--dim);font-size:13px;margin:12px 0 30px}
+
+  p{margin:0 0 14px}
+  .warn{border-left:3px solid var(--hot);padding:2px 0 2px 14px;color:var(--ink);margin:18px 0 24px}
+  button,.btn{font:700 13px/1 var(--mono);cursor:pointer;text-decoration:none;display:inline-block;
+    border:1px solid var(--rule);background:none;color:var(--ink);padding:12px 16px;border-radius:0}
+  button:hover,.btn:hover{border-color:var(--ink)}
+  button:focus-visible,.btn:focus-visible{outline:2px solid var(--ice);outline-offset:3px}
+  .hot{background:var(--hot);border-color:var(--hot);color:var(--void)}
+  .hot:hover{border-color:#fff}
+  #reveal{width:100%;padding:16px;font-size:15px}
+  #reveal:disabled{opacity:.6;cursor:progress}
+  #showvals{min-width:calc(17ch + 34px)}
+
+  .pk{font-size:13px;color:var(--dim);margin:0 0 10px}
+  .pk em{font-style:normal;color:var(--ice)}
+  .ln{display:grid;grid-template-columns:1fr auto;gap:4px 16px;align-items:center;
+    padding:14px 0;border-top:1px dashed var(--rule)}
+  .ln:last-child{border-bottom:1px dashed var(--rule)}
+  .ln .k{color:var(--hot);font-weight:700;overflow-wrap:anywhere;min-width:0}
+  .ln .kind{color:var(--deep);font-weight:400;margin-left:10px}
+  .ln .v{grid-column:1;font-size:13px;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-all;min-width:0}
+  .ln .v.masked{color:var(--deep);letter-spacing:2px}
+  .ln .v.meta{color:var(--dim)}
+  .ln > button,.ln > a{grid-row:1/3;grid-column:2;border-color:var(--ice);color:var(--ice);font-size:12px;padding:8px 12px;white-space:nowrap}
+  .ln > button:hover,.ln > a:hover{background:var(--ice);color:var(--void)}
+  .n{color:var(--deep)}
+
+  pre{font:13.5px/1.6 var(--mono);color:var(--ink);margin:0;padding:16px 0;
+    border-top:1px dashed var(--rule);border-bottom:1px dashed var(--rule);
+    white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-all;max-height:55vh;overflow-y:auto}
+
+  .actions{display:flex;gap:10px;margin-top:22px;flex-wrap:wrap}
+  .burn{margin-top:30px;display:inline-block;padding:9px 15px;color:var(--hot);border:2px solid var(--hot);
+    font-weight:700;font-size:13px;transform:rotate(-2deg);filter:url(#melt);box-shadow:0 0 18px #ff2a6d55}
+  .hint{color:var(--dim);font-size:12.5px;margin-top:18px;max-width:64ch}
+  code{color:var(--ice);font-family:var(--mono)}
+  #error{border-left:3px solid var(--hot);padding:4px 0 4px 14px;color:var(--ink);margin:0}
+
+  footer{margin-top:48px;color:var(--deep);font-size:12px}
+  footer a{color:var(--dim)}
   [hidden]{display:none !important}
+  @media (prefers-reduced-motion:reduce){.burn{filter:none}}
 </style>
 </head>
 <body>
-<button class="toggle" onclick="(function(){var r=document.documentElement;var d=(r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light'))==='dark';r.setAttribute('data-theme',d?'light':'dark');})()">◐ тема</button>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <filter id="melt"><feTurbulence type="fractalNoise" baseFrequency="0.02 0.25" numOctaves="2" seed="4"/>
+    <feDisplacementMap in="SourceGraphic" scale="3"/></filter>
+</svg>
 <div class="wrap">
 
 <header>
-  <div class="logo"><h1>sec<span class="dot">.</span></h1><span class="tag">вам передали секрет</span></div>
+  <h1 id="title">sec://locked</h1>
+  <div class="sub" id="sub">вам передали секрет</div>
 </header>
 
-<div class="card">
+<main>
   <div id="ask">
-    <p>Содержимое зашифровано: сервер его не видит, ключ расшифровки — в самой ссылке
-       и расшифровка произойдёт в вашем браузере.</p>
-    <p class="warnbox">Ссылка может быть одноразовой — секрет показывается один раз.
-       Не закрывайте страницу, пока не сохраните значение.</p>
-    <button id="reveal">Показать секрет</button>
+    <p>Содержимое зашифровано: сервер его не видит, ключ расшифровки лежит в самой ссылке,
+       расшифровка произойдёт в этом браузере.</p>
+    <p class="warn">Ссылка может быть одноразовой: секрет покажется один раз.
+       Не закрывайте вкладку, пока не сохраните значение.</p>
+    <button id="reveal" class="hot">Показать секрет</button>
   </div>
 
   <div id="result" hidden>
     <div id="pack" hidden>
-      <p style="margin-top:0">Пак <span id="packname"></span> — <span id="packcount"></span></p>
-      <div class="rows" id="packlist"></div>
+      <p class="pk">пак <em id="packname"></em>, <span id="packcount"></span></p>
+      <div id="packlist"></div>
     </div>
     <pre id="secret" hidden></pre>
-    <div class="file" id="fileinfo" hidden>📄 <span id="filename"></span> <span class="muted" id="filesize"></span></div>
+    <div id="fileinfo" hidden>
+      <div class="ln"><span class="k" id="filename"></span><span class="v meta" id="filesize"></span><a class="btn" id="download">Скачать</a></div>
+    </div>
     <div class="actions">
-      <button id="copy" hidden>Скопировать</button>
-      <a id="download" hidden>Скачать файл</a>
-      <button id="copyenv" hidden>Скопировать как .env</button>
-      <a id="downloadenv" hidden>Скачать .env</a>
+      <button id="copy" class="hot" hidden>Скопировать</button>
+      <button id="copyenv" class="hot" hidden>Скопировать .env</button>
+      <a id="downloadenv" class="btn" hidden>Скачать .env</a>
       <button id="showvals" hidden>Показать значения</button>
     </div>
-    <p id="packimport" class="muted" hidden style="margin-top:12px">
-      Если у вас есть sec: скачайте .env и выполните <code>sec import &lt;proj&gt; .env</code>
-      (файловые ключи скачиваются отдельно и заводятся <code>sec set &lt;proj&gt;/&lt;KEY&gt; --from-file</code>).</p>
-    <p id="burned" class="muted" hidden style="margin-top:12px">
-      Ссылка сгорела — повторно открыть её нельзя. Сохраните значение сейчас.</p>
+    <div><span id="burned" class="burn" hidden>ссылка сгорела, второй раз не откроется</span></div>
+    <p id="packimport" class="hint" hidden>
+      Есть sec? Скачайте .env и выполните <code>sec import <span id="importproj">&lt;proj&gt;</span> .env</code>;
+      файловые ключи заводятся отдельно: <code>sec set &lt;proj&gt;/&lt;KEY&gt; --from-file &lt;файл&gt;</code>.</p>
   </div>
 
   <p id="error" hidden></p>
-</div>
+</main>
 
-<footer>zero-knowledge: сервер хранит только шифротекст, расшифровка — WebCrypto в браузере ·
+<footer>сервер хранит только шифротекст, расшифровка через WebCrypto в браузере ·
   <a href="https://github.com/kaidstor/sec">sec</a></footer>
 </div>
 
@@ -129,6 +140,7 @@
   "use strict";
   var MAGIC = "secshare", HEADER = 9, NONCE = 12;
   var $ = function(id){ return document.getElementById(id); };
+  var REDUCE = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   function b64std(s){
     var bin = atob(s), out = new Uint8Array(bin.length);
@@ -177,6 +189,84 @@
     return {env: env, data: b64std(env.data || ""), once: body.once};
   }
 
+  // «Проявление» значения из шума слева направо. Шум — только из latin-набора
+  // шрифта: символ вне unicode-range подтянет другой шрифт и строка запрыгает.
+  var NOISE = "#$%&@01ABCDEF<>/\\|*+=";
+  var DECRYPT_MAX = 600; // длиннее — показываем сразу, анимация затянулась бы
+  var timers = new WeakMap();
+  // таймер живёт дольше клика: без остановки «Скрыть» посреди анимации
+  // проигрывал бы ей, и значение дописывалось бы в уже скрытую строку
+  function stopDecrypt(el){
+    clearInterval(timers.get(el));
+    timers.delete(el);
+  }
+  function decrypt(el, text, delay){
+    stopDecrypt(el);
+    if (REDUCE || text.length > DECRYPT_MAX) { el.textContent = text; return; }
+    var t = 0, lag = 6 + (delay || 0), step = Math.max(1, Math.ceil(text.length / 60));
+    var noise = document.createElement("span");
+    noise.className = "n";
+    var clear = document.createTextNode("");
+    function frame(){
+      var done = Math.min(text.length, Math.max(0, (t - lag) * step)), out = "";
+      for (var i = done; i < text.length; i++) {
+        var ch = text.charAt(i);
+        out += ch === "\n" ? "\n" : NOISE.charAt((i * 5 + t * 3) % NOISE.length);
+      }
+      clear.data = text.slice(0, done);
+      noise.textContent = out;
+      t++;
+      return done >= text.length;
+    }
+    // первый кадр синхронно: пустая строка до первого тика схлопнула бы высоту
+    frame();
+    el.textContent = "";
+    el.appendChild(clear);
+    el.appendChild(noise);
+    timers.set(el, setInterval(function(){
+      if (frame()) { stopDecrypt(el); el.textContent = text; }
+    }, 28));
+  }
+
+  function resize(el, change){
+    var from = el.getBoundingClientRect().height;
+    el.style.transition = "";
+    el.style.height = "";
+    change();
+    if (REDUCE) return;
+    var to = el.getBoundingClientRect().height;
+    if (from === to) return;
+    el.style.overflow = "hidden";
+    el.style.height = from + "px";
+    void el.offsetHeight; // зафиксировать стартовую высоту до перехода
+    el.style.transition = "height .22s ease-out";
+    el.style.height = to + "px";
+    el.ontransitionend = function(e){
+      if (e.propertyName !== "height") return;
+      el.style.transition = el.style.height = el.style.overflow = "";
+    };
+  }
+
+  function plural(n, one, few, many){
+    var m10 = n % 10, m100 = n % 100;
+    if (m10 === 1 && m100 !== 11) return one;
+    if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return few;
+    return many;
+  }
+  function sizeText(n){ return "файл, " + n.toLocaleString("ru-RU") + " " + plural(n, "байт", "байта", "байт"); }
+
+  function flash(btn, ok, label){
+    btn.textContent = ok;
+    setTimeout(function(){ btn.textContent = label; }, 2000);
+  }
+  function copyButton(btn, text, label){
+    btn.onclick = function(){
+      navigator.clipboard.writeText(text)
+        .then(function(){ flash(btn, "скопировано ✓", label); })
+        .catch(function(){ flash(btn, "не вышло", label); });
+    };
+  }
+
   // KEY=VALUE для .env: простые значения — как есть, остальные в двойных
   // кавычках с экранированием (так их понимает и sec import, и dotenv-парсеры)
   function envQuote(v){
@@ -185,71 +275,80 @@
       .replace(/\r/g, "").replace(/\n/g, "\\n") + '"';
   }
 
+  function line(key, kind){
+    var row = document.createElement("div");
+    row.className = "ln";
+    var k = document.createElement("span");
+    k.className = "k";
+    k.textContent = key;
+    if (kind){
+      var kd = document.createElement("span");
+      kd.className = "kind";
+      kd.textContent = kind;
+      k.appendChild(kd);
+    }
+    var v = document.createElement("span");
+    v.className = "v";
+    row.appendChild(k);
+    row.appendChild(v);
+    return {row: row, v: v};
+  }
+
   function showPack(res){
     var td = new TextDecoder();
     var entries = res.env.entries || [];
-    var texts = [];
+    var texts = [], hidden = [];
+    var proj = res.env.project || "";
     $("pack").hidden = false;
-    $("packname").textContent = res.env.project || "";
-    $("packcount").textContent = entries.length + " ключ" +
-      (entries.length % 10 === 1 && entries.length % 100 !== 11 ? "" :
-       entries.length % 10 >= 2 && entries.length % 10 <= 4 && (entries.length % 100 < 10 || entries.length % 100 >= 20) ? "а" : "ей");
+    $("packname").textContent = proj;
+    if (proj) $("importproj").textContent = proj;
+    $("packcount").textContent = entries.length + " " + plural(entries.length, "ключ", "ключа", "ключей");
     entries.forEach(function(e){
       var data = b64std(e.data || "");
-      var row = document.createElement("div");
-      row.className = "row";
-      var k = document.createElement("span");
-      k.className = "k";
-      k.textContent = (e.filename ? "📄 " : "") + e.key;
-      row.appendChild(k);
-      if (e.kind && e.kind !== "file"){
-        var kind = document.createElement("span");
-        kind.className = "kind";
-        kind.textContent = e.kind;
-        row.appendChild(kind);
-      }
+      var l = line(e.filename ? e.filename : e.key, e.kind && e.kind !== "file" ? e.kind : "");
       if (e.filename){
+        l.v.className = "v meta";
+        l.v.textContent = sizeText(data.length) + (e.filename !== e.key ? ", ключ " + e.key : "");
         var a = document.createElement("a");
+        a.className = "btn";
         a.href = URL.createObjectURL(new Blob([data], {type: "application/octet-stream"}));
         a.download = e.filename;
-        a.textContent = "Скачать " + e.filename;
-        row.appendChild(a);
+        a.textContent = "Скачать";
+        l.row.appendChild(a);
       } else {
         var text = td.decode(data);
         texts.push(e.key + "=" + envQuote(text));
+        l.v.className = "v masked";
+        l.v.textContent = "••••••••";
+        hidden.push({el: l.v, text: text});
         var btn = document.createElement("button");
         btn.textContent = "Скопировать";
-        btn.onclick = function(){
-          navigator.clipboard.writeText(text).then(function(){
-            btn.textContent = "✓";
-            setTimeout(function(){ btn.textContent = "Скопировать"; }, 2000);
-          }).catch(function(){ btn.textContent = "не вышло"; });
-        };
-        row.appendChild(btn);
+        copyButton(btn, text, "Скопировать");
+        l.row.appendChild(btn);
       }
-      $("packlist").appendChild(row);
+      $("packlist").appendChild(l.row);
     });
     if (texts.length){
       var envText = texts.join("\n") + "\n";
       var copyEnv = $("copyenv");
       copyEnv.hidden = false;
-      copyEnv.onclick = function(){
-        navigator.clipboard.writeText(envText).then(function(){
-          copyEnv.textContent = "Скопировано ✓";
-          setTimeout(function(){ copyEnv.textContent = "Скопировать как .env"; }, 2000);
-        }).catch(function(){ copyEnv.textContent = "Не вышло — покажите значения и скопируйте вручную"; });
-      };
+      copyButton(copyEnv, envText, "Скопировать .env");
       var dl = $("downloadenv");
       dl.href = URL.createObjectURL(new Blob([envText], {type: "text/plain"}));
-      dl.download = (res.env.project || "secrets") + ".env";
+      dl.download = (proj || "secrets") + ".env";
       dl.hidden = false;
-      var showBtn = $("showvals");
+      var showBtn = $("showvals"), shown = false;
       showBtn.hidden = false;
       showBtn.onclick = function(){
-        var pre = $("secret");
-        pre.hidden = !pre.hidden;
-        if (!pre.hidden) pre.textContent = envText;
-        showBtn.textContent = pre.hidden ? "Показать значения" : "Скрыть значения";
+        shown = !shown;
+        hidden.forEach(function(h, i){
+          resize(h.el, function(){
+            h.el.className = shown ? "v" : "v masked";
+            if (shown) decrypt(h.el, h.text, i * 4);
+            else { stopDecrypt(h.el); h.el.textContent = "••••••••"; }
+          });
+        });
+        showBtn.textContent = shown ? "Скрыть значения" : "Показать значения";
       };
     }
     $("packimport").hidden = false;
@@ -258,44 +357,45 @@
   function show(res){
     $("ask").hidden = true;
     $("result").hidden = false;
+    $("title").textContent = "sec://unlocked";
+    $("sub").textContent = "расшифровано в этом браузере, сервер видел только шифротекст";
     if (res.once) $("burned").hidden = false;
     if (res.env.type === "pack") return showPack(res);
     if (res.env.type === "file"){
       var name = res.env.filename || "secret";
       $("fileinfo").hidden = false;
       $("filename").textContent = name;
-      $("filesize").textContent = "(" + res.data.length + " байт)";
+      $("filesize").textContent = sizeText(res.data.length);
       var a = $("download");
       a.href = URL.createObjectURL(new Blob([res.data], {type: "application/octet-stream"}));
       a.download = name;
-      a.hidden = false;
       return;
     }
+    if (res.env.type !== "text")
+      throw new Error("Ссылка создана более новой версией sec (тип «" + res.env.type + "»), эта страница его не знает. Секрет уже забран — попросите отправителя прислать заново.");
     var text = new TextDecoder().decode(res.data);
-    $("secret").textContent = text;
     $("secret").hidden = false;
+    decrypt($("secret"), text, 0);
     var copy = $("copy");
     copy.hidden = false;
-    copy.onclick = function(){
-      navigator.clipboard.writeText(text).then(function(){
-        copy.textContent = "Скопировано ✓";
-        setTimeout(function(){ copy.textContent = "Скопировать"; }, 2000);
-      }).catch(function(){
-        copy.textContent = "Не вышло — выделите текст вручную";
-      });
-    };
+    copyButton(copy, text, "Скопировать");
+  }
+
+  function fail(e){
+    $("ask").hidden = true;
+    $("result").hidden = true;
+    $("title").textContent = "sec://void";
+    $("sub").textContent = "секрет не расшифрован";
+    var err = $("error");
+    err.textContent = e.message || String(e);
+    err.hidden = false;
   }
 
   $("reveal").onclick = function(){
     var btn = $("reveal");
     btn.disabled = true;
     btn.textContent = "Расшифровываю…";
-    claimAndDecrypt().then(show).catch(function(e){
-      $("ask").hidden = true;
-      var err = $("error");
-      err.textContent = e.message || String(e);
-      err.hidden = false;
-    });
+    claimAndDecrypt().then(show).catch(fail);
   };
 })();
 </script>

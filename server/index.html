@@ -3,55 +3,78 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
 <title>sec share — одноразовые зашифрованные ссылки</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <style>
+  /* те же шрифты и палитра, что у reveal.html: стили не общие, правка — в обоих файлах */
+  @font-face{font-family:"JetBrains Mono";font-weight:100 800;font-display:swap;
+    src:url(/fonts/jbmono-latin.woff2) format("woff2");
+    unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
+  @font-face{font-family:"JetBrains Mono";font-weight:100 800;font-display:swap;
+    src:url(/fonts/jbmono-cyrillic.woff2) format("woff2");
+    unicode-range:U+0301,U+0400-045F,U+0490-0491,U+04B0-04B1,U+2116}
+  @font-face{font-family:"Unbounded";font-weight:900;font-display:swap;
+    src:url(/fonts/unbounded-latin.woff2) format("woff2");
+    unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
+
   :root{
-    --bg:#f7f8fa; --panel:#ffffff; --ink:#1a1d24; --muted:#5b6472;
-    --line:#e5e8ee; --accent:#0f766e; --accent-soft:#0f766e14;
-    --code-bg:#f2f4f7; --code-ink:#0b3d39;
-    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
-  }
-  @media (prefers-color-scheme:dark){
-    :root{
-      --bg:#0d1117; --panel:#161b22; --ink:#e6edf3; --muted:#9098a5;
-      --line:#232a34; --accent:#2dd4bf; --accent-soft:#2dd4bf1a;
-      --code-bg:#0b0f14; --code-ink:#7fe9dd;
-    }
+    --void:#0d0221; --ink:#e4dcff; --dim:#8f7fbf; --deep:#5b4a8f; --rule:#3a2a6b;
+    --hot:#ff2a6d; --ice:#05d9e8;
+    --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
   }
   *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--ink);
-    font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-    -webkit-font-smoothing:antialiased;}
-  .wrap{max-width:640px;margin:0 auto;padding:0 20px 60px}
-  header{padding:48px 0 24px}
-  .logo{display:inline-flex;align-items:baseline;gap:12px;flex-wrap:wrap}
-  .logo h1{font:800 34px/1 var(--mono);letter-spacing:-1px;margin:0}
-  .logo .dot{color:var(--accent)}
-  .tag{color:var(--muted);font-size:15px}
-  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px}
-  .card p{margin:0 0 12px}
-  .card p:last-child{margin:0}
-  code{font-family:var(--mono);font-size:.88em;background:var(--code-bg);
-    color:var(--code-ink);padding:1px 6px;border-radius:5px}
-  a{color:var(--accent)}
-  footer{margin-top:36px;color:var(--muted);font-size:13px}
+  html{background:var(--void)}
+  body{margin:0;min-height:100vh;color:var(--ink);font:15px/1.6 var(--mono);
+    font-variant-ligatures:none;font-feature-settings:"calt" 0,"liga" 0;
+    -webkit-font-smoothing:antialiased;
+    background:
+      repeating-linear-gradient(0deg,#ffffff06 0 1px,transparent 1px 3px),
+      radial-gradient(90% 60% at 80% -10%,#2a0b4d 0%,transparent 60%),
+      var(--void)}
+  .wrap{max-width:680px;margin:0 auto;padding:0 22px 64px}
+  header{padding:56px 0 8px}
+  h1{font:900 clamp(30px,7vw,46px)/1 "Unbounded",var(--mono);letter-spacing:-1px;margin:0;color:#fff;
+    text-shadow:-2px 0 var(--hot),2px 0 var(--ice);overflow-wrap:anywhere}
+  .sub{color:var(--dim);font-size:13px;margin:12px 0 30px}
+  p{margin:0 0 14px;max-width:64ch}
+  code{font-family:var(--mono);color:var(--ice)}
+  a{color:var(--ice)}
+  a:focus-visible{outline:2px solid var(--ice);outline-offset:3px}
+
+  ol{list-style:none;margin:26px 0 0;padding:0;counter-reset:step}
+  li{counter-increment:step;display:grid;grid-template-columns:3ch 1fr;gap:0 14px;
+    padding:14px 0;border-top:1px dashed var(--rule)}
+  li:last-child{border-bottom:1px dashed var(--rule)}
+  li::before{content:counter(step);color:var(--hot);font-weight:700}
+  li b{color:var(--hot);font-weight:700}
+  li span{grid-column:2;color:var(--dim);font-size:13px}
+
+  footer{margin-top:48px;color:var(--deep);font-size:12px}
 </style>
 </head>
 <body>
 <div class="wrap">
 <header>
-  <div class="logo"><h1>sec<span class="dot">.</span></h1><span class="tag">одноразовые зашифрованные ссылки</span></div>
+  <h1>sec://share</h1>
+  <div class="sub">одноразовые зашифрованные ссылки</div>
 </header>
-<div class="card">
-  <p>Сюда попадают по ссылкам вида <code>/s/&lt;id&gt;#&lt;ключ&gt;</code> — их создаёт
+
+<main>
+  <p>Сюда попадают по ссылкам вида <code>/s/&lt;id&gt;#&lt;ключ&gt;</code>. Их создаёт
      CLI <a href="https://github.com/kaidstor/sec">sec</a> командой <code>sec share</code>.</p>
-  <p>Секрет шифруется на машине отправителя, сервер хранит только шифротекст.
-     Ключ расшифровки живёт во фрагменте ссылки и серверу не отправляется —
-     расшифровка происходит в браузере получателя. Ссылка сгорает при первом
-     открытии или по истечении срока.</p>
-</div>
-<footer>zero-knowledge · только для ссылок, созданных владельцами токенов</footer>
+
+  <ol>
+    <li><b>Шифрование у отправителя</b>
+      <span>sec шифрует секрет локально, на сервер уходит только шифротекст.</span></li>
+    <li><b>Ключ во фрагменте ссылки</b>
+      <span>Часть после # браузер серверу не отправляет: ключа здесь нет ни в базе, ни в логах.</span></li>
+    <li><b>Расшифровка у получателя</b>
+      <span>Страница расшифровывает секрет в браузере. Ссылка сгорает при первом открытии или по сроку.</span></li>
+  </ol>
+</main>
+
+<footer>ссылки создают только владельцы токенов этого сервера</footer>
 </div>
 </body>
 </html>

@@ -61,7 +61,7 @@ func (s *Server) Mux() *http.ServeMux {
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, _ *http.Request) {
 		h := w.Header()
 		h.Set("Content-Type", "text/html; charset=utf-8")
-		h.Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'")
+		h.Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; font-src 'self'")
 		h.Set("Referrer-Policy", "no-referrer")
 		h.Set("X-Content-Type-Options", "nosniff")
 		_, _ = w.Write(indexHTML)
@@ -72,6 +72,18 @@ func (s *Server) Mux() *http.ServeMux {
 		h.Set("Cache-Control", "public, max-age=86400")
 		h.Set("X-Content-Type-Options", "nosniff")
 		_, _ = w.Write(faviconSVG)
+	})
+	mux.HandleFunc("GET /fonts/{name}", func(w http.ResponseWriter, r *http.Request) {
+		data, err := fontsFS.ReadFile("fonts/" + r.PathValue("name"))
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		h := w.Header()
+		h.Set("Content-Type", "font/woff2")
+		h.Set("Cache-Control", "public, max-age=31536000, immutable")
+		h.Set("X-Content-Type-Options", "nosniff")
+		_, _ = w.Write(data)
 	})
 	return mux
 }
@@ -231,7 +243,7 @@ func (s *Server) handleReveal(w http.ResponseWriter, _ *http.Request) {
 	// frame-ancestors 'none' — кликджекинг на «Показать» сжёг бы once-ссылку
 	h.Set("Content-Security-Policy",
 		"default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; "+
-			"img-src 'self'; object-src blob:; frame-src blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
+			"img-src 'self'; font-src 'self'; object-src blob:; frame-src blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
 	h.Set("Referrer-Policy", "no-referrer")
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("X-Robots-Tag", "noindex")
