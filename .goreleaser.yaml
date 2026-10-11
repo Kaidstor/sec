@@ -63,7 +63,7 @@ homebrew_casks:
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}" # PAT с правом записи в tap-репо (secret в CI)
     directory: Casks
     homepage: "https://github.com/kaidstor/sec"
-    description: "Локальный менеджер секретов для безопасной работы с агентами (значения не попадают в argv/историю/чат)"
+    description: "Локальный менеджер секретов: значения не попадают в argv, историю и чат"
     binaries:
       - sec
     # completion ставится при brew install прогоном `sec completion <shell>`.
