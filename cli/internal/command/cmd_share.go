@@ -48,11 +48,11 @@ func shareConfig(st *store.Store) (baseURL, token string, ok bool) {
 	baseURL, token = os.Getenv("SEC_SHARE_URL"), os.Getenv("SEC_SHARE_TOKEN")
 	if st != nil {
 		keys := st.Projects[shareConfigProject]
-		if baseURL == "" {
-			baseURL = keys["URL"].Value
+		if s, ok := keys["URL"]; ok && baseURL == "" {
+			baseURL = mustText(s.Val)
 		}
-		if token == "" {
-			token = keys["TOKEN"].Value
+		if s, ok := keys["TOKEN"]; ok && token == "" {
+			token = mustText(s.Val)
 		}
 	}
 	return baseURL, token, baseURL != "" && token != ""
@@ -112,6 +112,11 @@ func shareCreateCommand(args []string) int {
 	st, _, _, storeErr := store.Open(false)
 	if storeErr != nil {
 		st = nil // без стора работают только - и --file c env-конфигом
+	}
+	var client *share.Client
+	if ref == "-" { // ввод значения может длиться сколько угодно — снимок стора не держим
+		client = mustShareClient(st)
+		st.Close()
 	}
 
 	var env share.Envelope
@@ -235,7 +240,10 @@ func shareCreateCommand(args []string) int {
 		target = proj + "/" + key
 	}
 
-	client := mustShareClient(st)
+	if client == nil {
+		client = mustShareClient(st)
+	}
+	st.Close() // дальше сеть — снимок стора не держим
 	key, err := share.NewKey()
 	if err != nil {
 		dieK(kindIO, "%v", err)
@@ -349,17 +357,16 @@ func shareSetupCommand(args []string) int {
 	_ = fs.Parse(args)
 
 	if forget {
-		unlock := store.Lock()
-		defer unlock()
-		st, mkey, _, err := store.Open(false)
+		st, _, _, err := store.Begin(false)
 		if err != nil {
 			dieStore(err)
 		}
+		defer st.Close()
 		if _, ok := st.Projects[shareConfigProject]; !ok {
 			dieK(kindConfig, "share не настроен — забывать нечего")
 		}
 		delete(st.Projects, shareConfigProject)
-		if err := store.Save(st, mkey); err != nil {
+		if err := st.Commit(); err != nil {
 			dieK(kindStore, "запись хранилища: %v", err)
 		}
 		audit.Record("share-setup", "", "forget")
@@ -398,16 +405,15 @@ func shareSetupCommand(args []string) int {
 		dieK(shareErrKind(err), "проверка не прошла: %v", err)
 	}
 
-	unlock := store.Lock()
-	defer unlock()
-	st, mkey, _, err := store.Open(true)
+	st, _, _, err := store.Begin(true)
 	if err != nil {
 		dieStore(err)
 	}
+	defer st.Close()
 	keys := st.Project(shareConfigProject)
 	store.Put(keys, "URL", baseURL)
 	store.Put(keys, "TOKEN", token)
-	if err := store.Save(st, mkey); err != nil {
+	if err := st.Commit(); err != nil {
 		dieK(kindStore, "запись хранилища: %v", err)
 	}
 	audit.Record("share-setup", hostOf(baseURL), "")
@@ -448,7 +454,9 @@ func shareLsCommand(args []string) int {
 	if s, _, _, err := store.Open(false); err == nil {
 		st = s
 	}
-	links, err := mustShareClient(st).List()
+	client := mustShareClient(st)
+	st.Close()
+	links, err := client.List()
 	if err != nil {
 		dieShare(err)
 	}
@@ -513,7 +521,9 @@ func shareRevokeCommand(args []string) int {
 	if s, _, _, err := store.Open(false); err == nil {
 		st = s
 	}
-	if err := mustShareClient(st).Revoke(id); err != nil {
+	client := mustShareClient(st)
+	st.Close()
+	if err := client.Revoke(id); err != nil {
 		dieShare(err)
 	}
 	audit.Record("share-revoke", id, "")

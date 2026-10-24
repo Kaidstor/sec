@@ -65,6 +65,7 @@ func redactCommand(args []string) int {
 		dieStore(err)
 	}
 	values, skips := collectStoreValues(st, storeScope{minLen: minLen, withHistory: withHistory, includeConfig: includeConfig})
+	st.Close() // дальше stdin и файлы — снимок стора не держим
 	reportScanSkips(skips, minLen)
 	rd := newRedactor(buildReplacements(values, mask), !storeOnly)
 

@@ -18,7 +18,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
+	"runtime"
 	"strings"
+	"syscall"
 )
 
 const schemaVersion = 1
@@ -67,6 +70,11 @@ var (
 	resultSet  bool
 	pending    *failure
 	warnings   []string
+
+	// committed — что команда уже необратимо сделала; дописывается к ошибке
+	// вывода конверта, чтобы отказ не читался как «ничего не произошло»
+	committed  string
+	pipeSignal = make(chan os.Signal, 1)
 )
 
 // splitGlobalFlags вынимает --json/--human из любого места argv до «--»
@@ -96,7 +104,7 @@ func splitGlobalFlags(args []string) (bool, []string) {
 func startOutput(cmd string, asJSON bool) {
 	curCommand, jsonMode = cmd, asJSON
 	captured.Reset()
-	resultData, resultSet, pending, warnings = nil, false, nil, nil
+	resultData, resultSet, pending, warnings, committed = nil, false, nil, nil, ""
 	if asJSON {
 		stdout = &captured
 	} else {
@@ -145,12 +153,53 @@ func finish(code int) int {
 	case captured.Len() > 0:
 		env.Data = map[string]string{"text": strings.TrimRight(captured.String(), "\n")}
 	}
-	enc := json.NewEncoder(realStdout)
+	enc := json.NewEncoder(checkedWriter{realStdout})
 	enc.SetIndent("", "  ")
 	enc.SetEscapeHTML(false) // иначе & в share-ссылках уезжает в &
-	_ = enc.Encode(env)
+	if err := enc.Encode(env); err != nil {
+		fmt.Fprintf(os.Stderr, "sec: конверт не выведен в stdout: %v%s\n", err, committed)
+		if code == 0 {
+			return 2
+		}
+	}
 	return code
 }
+
+type checkedWriter struct{ io.Writer }
+
+func (w checkedWriter) Write(p []byte) (int, error) {
+	n, err := w.Writer.Write(p)
+	if err == nil && n != len(p) {
+		err = io.ErrShortWrite
+	}
+	return n, err
+}
+
+// stdoutDiscarded — stdout ведёт в /dev/null. Закрытый fd 1 выглядит так же:
+// рантайм Go на старте подставляет /dev/null вместо закрытых 0–2, и запись
+// «удаётся». Для вывода, который нельзя повторить (get --once, ключ rekey).
+func stdoutDiscarded() bool {
+	f, ok := realStdout.(*os.File)
+	if !ok || runtime.GOOS == "windows" {
+		return false
+	}
+	fi, err := f.Stat()
+	if err != nil {
+		return true
+	}
+	nul, err := os.Stat(os.DevNull)
+	return err == nil && os.SameFile(fi, nul)
+}
+
+// catchSIGPIPE — запись в закрытый пайп вернёт EPIPE вместо молчаливой
+// смерти от SIGPIPE: команде после коммита есть что объяснить. Только для
+// команд, которым это нужно: глобально `sec ls | head` перестал бы тихо
+// завершаться по SIGPIPE.
+func catchSIGPIPE() {
+	signal.Notify(pipeSignal, syscall.SIGPIPE)
+}
+
+func stopSIGPIPE() { signal.Stop(pipeSignal) }
 
 // exitNow завершает процесс с конвертом — для отказов из глубины хелперов.
 func exitNow(code int) {

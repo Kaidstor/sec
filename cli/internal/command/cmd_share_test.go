@@ -30,9 +30,9 @@ func TestHostOf(t *testing.T) {
 
 func packTestKeys() map[string]store.Secret {
 	return map[string]store.Secret{
-		"B_TOKEN": {Value: "tok-b"},
-		"A_URL":   {Value: "https://x", Meta: &store.Meta{Kind: "config"}},
-		"CERT": {Value: "AAEC", Enc: store.EncB64,
+		"B_TOKEN": {Val: store.Text("tok-b")},
+		"A_URL":   {Val: store.Text("https://x"), Meta: &store.Meta{Kind: "config"}},
+		"CERT": {Val: store.Text("AAEC"), Enc: store.EncB64,
 			Meta: &store.Meta{Kind: "file", Filename: "/tmp/server.p12", FileMode: "0640"}},
 	}
 }
@@ -80,8 +80,8 @@ func TestPackEntriesOnly(t *testing.T) {
 
 func TestPackEntriesSizeCap(t *testing.T) {
 	keys := map[string]store.Secret{
-		"BIG": {Value: strings.Repeat("x", maxFileSecret)},
-		"ONE": {Value: "y"},
+		"BIG": {Val: store.Text(strings.Repeat("x", maxFileSecret))},
+		"ONE": {Val: store.Text("y")},
 	}
 	if _, err := packEntries(keys, ""); err == nil {
 		t.Fatal("превышение суммарного предела не поймано")

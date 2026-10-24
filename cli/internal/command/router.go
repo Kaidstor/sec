@@ -218,7 +218,7 @@ func selectKeys(keys map[string]store.Secret, only, projLabel string, includeFil
 			case !includeFiles && s.IsFile():
 				fileSkipped = append(fileSkipped, k)
 			default:
-				out[k] = s.Value
+				out[k] = mustText(s.Val)
 			}
 		}
 		if len(binSkipped) > 0 {
@@ -241,7 +241,7 @@ func selectKeys(keys map[string]store.Secret, only, projLabel string, includeFil
 				die("%s/%s — бинарный (файловый) секрет, в env/Infisical не отдаётся: sec get %s/%s --out <файл>",
 					projLabel, k, projLabel, k)
 			}
-			out[k] = s.Value
+			out[k] = mustText(s.Val)
 		} else {
 			missing = append(missing, k)
 		}
@@ -278,9 +278,11 @@ func splitArgs(args []string) (string, []string) {
 }
 
 const usage = `sec — локальные секреты для проектов, безопасные для работы с агентами:
-значения не попадают в argv/историю/чат. Хранилище — файл XChaCha20-Poly1305,
-мастер-ключ — в системном хранилище ОС: macOS Keychain / Linux libsecret /
-Windows Credential Manager (fallback: env SEC_KEY / файл).
+значения не попадают в argv/историю/чат. Хранилище — локальная база SQLite,
+где каталог и каждое значение отдельно зашифрованы XChaCha20-Poly1305 до
+записи (прежний формат — один зашифрованный файл, sec migrate), мастер-ключ —
+в системном хранилище ОС: macOS Keychain / Linux libsecret / Windows
+Credential Manager (fallback: env SEC_KEY / файл).
 
 Использование:
   sec set <proj>/<KEY>                 сохранить (скрытый ввод, дважды)
@@ -339,6 +341,7 @@ Windows Credential Manager (fallback: env SEC_KEY / файл).
   sec restore --file <f> [--replace]   восстановить (умолч. merge, старое в истории)
   sec sync --file <blob>               синхронизация через общий passphrase-блоб
   sec rekey                            ротация мастер-ключа с перешифровкой стора
+  sec migrate [--to-v2]                перевести стор SECSTOR2 в SQLite (--to-v2 — обратно)
   sec log [proj[/KEY]] [-n 20] [--all] журнал обращений (кто/когда/что, без значений)
   sec info                             путь к хранилищу, бэкенд ключа, статистика
   sec stats [--days 14]                что из CLI реально используется, а что ни разу
@@ -418,6 +421,18 @@ kind: config — несекретная настройка (endpoint, разме
 провайдеров). Конфиг не считается утечкой в scan/redact (вернуть в поиск —
 --include-config) и показывается открытым текстом в diff/deploy: отпечатка мало,
 чтобы понять, что там сейчас стоит.
+
+Формат хранилища (sec info покажет текущий):
+  SQLite (новые сторы) — get/ls/find читают каталог и только нужное значение,
+  а не весь стор. Снаружи видна лишь структура: число и размеры значений, но
+  не имена и не содержимое. Рядом со store.enc живут store.enc-wal и -shm —
+  часть базы: копировать стор только вместе с ними и не во время записи;
+  переносить — sec backup. Удалённая версия исчезает логически, физически
+  затёртой на диске её никто не гарантирует.
+  SECSTOR2 (прежний) — читается как раньше; sec migrate переводит его в SQLite
+  (копия прежнего файла — store.enc.v2-<время>.bak), sec migrate --to-v2 —
+  обратно со всеми текущими данными (для отката на старый sec). Старый sec
+  на базе SQLite откажет «не похоже на хранилище sec», ничего не создав.
 
 Переменные окружения:
   SEC_STORE       путь к хранилищу (умолч. ~/.local/share/sec/store.enc,
@@ -514,6 +529,7 @@ func usedFlags(cmd string, args []string) []string {
 // Run — точка входа CLI: разбирает args (без имени программы), маршрутизирует
 // команду и возвращает код выхода. main() из пакета main делегирует сюда.
 func Run(args []string) int {
+	defer stopSIGPIPE()
 	// скрытые __-команды зовёт шелл и сам sec: их argv — слова пользователя
 	// (`sec ls --json<TAB>`), общие флаги оттуда вынимать нельзя
 	asJSON := false
@@ -535,7 +551,9 @@ func Run(args []string) int {
 	// самолечение агентского скилла до switch: `sec run` замещает процесс
 	// (syscall.Exec) и в пост-хук не вернулся бы
 	syncSkillsStale(args[0])
-	return finish(dispatch(args))
+	code := dispatch(args)
+	store.CloseAll()
+	return finish(code)
 }
 
 func dispatch(args []string) int {
@@ -598,6 +616,8 @@ func dispatch(args []string) int {
 		return redactCommand(args[1:])
 	case "rekey":
 		return rekeyCommand(args[1:])
+	case "migrate":
+		return migrateCommand(args[1:])
 	case "sync":
 		return syncCommand(args[1:])
 	case "__clearclip": // скрытый воркер отложенной очистки буфера (get --clear-after)

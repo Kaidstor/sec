@@ -10,9 +10,9 @@ import (
 
 func redactStore() *store.Store {
 	return &store.Store{Version: 1, Projects: map[string]map[string]store.Secret{
-		"whois":   {"API_TOKEN": {Value: "supersecretvalue123"}},
-		"db@prod": {"PASSWORD": {Value: "hunter2hunter2pw"}},
-		"app":     {"SHORT": {Value: "abc"}, "REFD": {Ref: "whois/API_TOKEN"}},
+		"whois":   {"API_TOKEN": {Val: store.Text("supersecretvalue123")}},
+		"db@prod": {"PASSWORD": {Val: store.Text("hunter2hunter2pw")}},
+		"app":     {"SHORT": {Val: store.Text("abc")}, "REFD": {Ref: "whois/API_TOKEN"}},
 	}}
 }
 
@@ -85,7 +85,7 @@ func TestRedactLongestFirst(t *testing.T) {
 	// значение, содержащее внутри другое сохранённое значение, должно замениться
 	// целиком (длинные меняются первыми).
 	st := &store.Store{Version: 1, Projects: map[string]map[string]store.Secret{
-		"a": {"BASE": {Value: "abcdefgh"}, "LONG": {Value: "abcdefgh_and_more"}},
+		"a": {"BASE": {Val: store.Text("abcdefgh")}, "LONG": {Val: store.Text("abcdefgh_and_more")}},
 	}}
 	out, _ := redactText(t, st, "v=abcdefgh_and_more\n", 8, false, false)
 	if strings.Contains(out, "abcdefgh") {
@@ -118,7 +118,7 @@ func TestRedactPassThrough(t *testing.T) {
 
 func TestRedactHistory(t *testing.T) {
 	st := &store.Store{Version: 1, Projects: map[string]map[string]store.Secret{
-		"a": {"TOK": {Value: "current-value-x", History: []store.Version{{Value: "old-leaked-value"}}}},
+		"a": {"TOK": {Val: store.Text("current-value-x"), History: []store.Version{{Val: store.Text("old-leaked-value")}}}},
 	}}
 	// без --history старое значение не трогается
 	out, _ := redactText(t, st, "leak=old-leaked-value\n", 8, false, false)

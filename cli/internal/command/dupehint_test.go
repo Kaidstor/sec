@@ -10,11 +10,11 @@ import (
 func dupeTestStore() *store.Store {
 	return &store.Store{Projects: map[string]map[string]store.Secret{
 		"apple": {
-			"APPLE_PASSWORD": {Value: "s3cret", UpdatedAt: "2025-01-01T00:00:00Z"},
+			"APPLE_PASSWORD": {Val: store.Text("s3cret"), UpdatedAt: "2025-01-01T00:00:00Z"},
 		},
 		"sql-kai": {
-			"APPLE_PASSWORD": {Value: "s3cret", UpdatedAt: "2026-01-01T00:00:00Z"},
-			"GITLAB_TOKEN":   {Value: "glpat-xxx", UpdatedAt: "2026-01-01T00:00:00Z"},
+			"APPLE_PASSWORD": {Val: store.Text("s3cret"), UpdatedAt: "2026-01-01T00:00:00Z"},
+			"GITLAB_TOKEN":   {Val: store.Text("glpat-xxx"), UpdatedAt: "2026-01-01T00:00:00Z"},
 			"LINKED":         {Ref: "apple/APPLE_PASSWORD", UpdatedAt: "2026-01-01T00:00:00Z"},
 		},
 	}}
@@ -46,8 +46,8 @@ func TestDupeHintsBatchGivesOneLine(t *testing.T) {
 	mkey := []byte("k")
 	st := &store.Store{Projects: map[string]map[string]store.Secret{
 		"proj": {
-			"A": {Value: "same", UpdatedAt: "2026-01-01T00:00:00Z"},
-			"B": {Value: "same", UpdatedAt: "2026-01-01T00:00:00Z"},
+			"A": {Val: store.Text("same"), UpdatedAt: "2026-01-01T00:00:00Z"},
+			"B": {Val: store.Text("same"), UpdatedAt: "2026-01-01T00:00:00Z"},
 		},
 	}}
 	hints := dupeHints(st, mkey, "proj", []string{"A", "B"})
@@ -59,8 +59,8 @@ func TestDupeHintsBatchGivesOneLine(t *testing.T) {
 func TestDupeHintsEncSeparatesBinary(t *testing.T) {
 	mkey := []byte("k")
 	st := &store.Store{Projects: map[string]map[string]store.Secret{
-		"a": {"TEXT": {Value: "aGVsbG8=", UpdatedAt: "2025-01-01T00:00:00Z"}},
-		"b": {"FILE": {Value: "aGVsbG8=", Enc: store.EncB64, UpdatedAt: "2026-01-01T00:00:00Z"}},
+		"a": {"TEXT": {Val: store.Text("aGVsbG8="), UpdatedAt: "2025-01-01T00:00:00Z"}},
+		"b": {"FILE": {Val: store.Text("aGVsbG8="), Enc: store.EncB64, UpdatedAt: "2026-01-01T00:00:00Z"}},
 	}}
 	if hints := dupeHints(st, mkey, "b", []string{"FILE"}); len(hints) != 0 {
 		t.Errorf("текст, равный base64 бинарного, — не дубль: %v", hints)
@@ -70,11 +70,11 @@ func TestDupeHintsEncSeparatesBinary(t *testing.T) {
 func TestDupeHintsProfileForms(t *testing.T) {
 	mkey := []byte("k")
 	st := &store.Store{Projects: map[string]map[string]store.Secret{
-		"shared":      {"TOKEN": {Value: "v", UpdatedAt: "2025-01-01T00:00:00Z"}},
-		"shared@prod": {"TOKEN": {Value: "v2", UpdatedAt: "2025-01-01T00:00:00Z"}},
-		"svc@prod":    {"TOKEN": {Value: "v2", UpdatedAt: "2026-01-01T00:00:00Z"}},
-		"svc@staging": {"TOKEN": {Value: "v", UpdatedAt: "2026-01-01T00:00:00Z"}},
-		"plain":       {"TOKEN": {Value: "v2", UpdatedAt: "2026-06-01T00:00:00Z"}},
+		"shared":      {"TOKEN": {Val: store.Text("v"), UpdatedAt: "2025-01-01T00:00:00Z"}},
+		"shared@prod": {"TOKEN": {Val: store.Text("v2"), UpdatedAt: "2025-01-01T00:00:00Z"}},
+		"svc@prod":    {"TOKEN": {Val: store.Text("v2"), UpdatedAt: "2026-01-01T00:00:00Z"}},
+		"svc@staging": {"TOKEN": {Val: store.Text("v"), UpdatedAt: "2026-01-01T00:00:00Z"}},
+		"plain":       {"TOKEN": {Val: store.Text("v2"), UpdatedAt: "2026-06-01T00:00:00Z"}},
 	}}
 
 	// равные профили (svc@prod ↔ shared@prod) — профиль родителя наследуется,

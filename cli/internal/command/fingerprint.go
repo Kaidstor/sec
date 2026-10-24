@@ -73,7 +73,7 @@ func diffCommand(args []string) int {
 		sb, okB := b[k]
 		switch {
 		case okA && okB:
-			if hmac.Equal([]byte(store.Fingerprint(mkey, sa.Value)), []byte(store.Fingerprint(mkey, sb.Value))) {
+			if hmac.Equal([]byte(sa.Val.Fingerprint(mkey)), []byte(sb.Val.Fingerprint(mkey))) {
 				fmt.Fprintf(stdout, "%-32s = совпадают\n", k)
 				keys = append(keys, keyDiff{k, "same"})
 				same++
@@ -116,7 +116,8 @@ func diffAgainstFile(service, target, only string, sudo bool) int {
 	if err != nil {
 		dieStore(err)
 	}
-	keys := envKeysOf(st, proj, only)
+	keys := loadedKeys(envKeysOf(st, proj, only))
+	st.Close() // дальше ssh — снимок стора не держим
 
 	data, exists, err := t.read(sudo)
 	if err != nil {
@@ -181,6 +182,15 @@ func verifyCommand(args []string) int {
 	if !ok {
 		dieNotFound("нет %s/%s", proj, key)
 	}
+	// сверяем с сырыми байтами значения: у бинарных значение — base64, сравнивать
+	// нужно декодированное, и только байт-в-байт. Текстовым прощаем хвостовой
+	// перевод строки с обеих сторон: файловые секреты хранятся без трима
+	// (cat добавляет \n кандидату), обычные тримятся при set.
+	stored, berr := sec.Bytes()
+	if berr != nil {
+		dieK(kindStore, "%s/%s: %v", proj, key, berr)
+	}
+	st.Close() // ввод кандидата может длиться сколько угодно
 
 	var cand string
 	switch {
@@ -201,21 +211,12 @@ func verifyCommand(args []string) int {
 			dieK(kindIO, "%v", err)
 		}
 	}
-	// сверяем с сырыми байтами значения: у бинарных Value — base64, сравнивать
-	// нужно декодированное, и только байт-в-байт. Текстовым прощаем хвостовой
-	// перевод строки с обеих сторон: файловые секреты хранятся без трима
-	// (cat добавляет \n кандидату), обычные тримятся при set.
-	stored, berr := sec.Bytes()
-	if berr != nil {
-		dieK(kindStore, "%s/%s: %v", proj, key, berr)
-	}
-
 	audit.Record("verify", proj+"/"+key, "")
 	match := subtle.ConstantTimeCompare([]byte(cand), stored) == 1
 	if !match && !sec.IsBinary() {
 		match = subtle.ConstantTimeCompare(
 			[]byte(strings.TrimRight(cand, "\r\n")),
-			[]byte(strings.TrimRight(sec.Value, "\r\n"))) == 1
+			[]byte(strings.TrimRight(string(stored), "\r\n"))) == 1
 	}
 	emit(map[string]any{"ref": proj + "/" + key, "match": match})
 	if match {

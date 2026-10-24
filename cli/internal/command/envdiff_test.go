@@ -9,9 +9,9 @@ import (
 
 func envDiffFixture() (map[string]store.Secret, map[string]string) {
 	keys := map[string]store.Secret{
-		"WHOXY_API_KEY":           {Value: "same-secret-value"},
-		"WHOIS_HISTORY_PROVIDERS": {Value: "whoxy", Meta: &store.Meta{Kind: store.KindConfig}},
-		"REDIS_URL":               {Value: "redis://store-only"},
+		"WHOXY_API_KEY":           {Val: store.Text("same-secret-value")},
+		"WHOIS_HISTORY_PROVIDERS": {Val: store.Text("whoxy"), Meta: &store.Meta{Kind: store.KindConfig}},
+		"REDIS_URL":               {Val: store.Text("redis://store-only")},
 	}
 	file := map[string]string{
 		"WHOXY_API_KEY":           "same-secret-value",

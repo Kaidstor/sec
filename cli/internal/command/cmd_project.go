@@ -89,21 +89,21 @@ func lsCommand(args []string) int {
 				}
 				s := own[k]
 				info := keyInfo{Key: k, Enc: s.Enc, UpdatedAt: s.UpdatedAt, History: len(s.History), Meta: s.Meta}
-				val := s.Value
+				val := s.Val
 				if s.Ref != "" { // ссылка — enc/отпечаток/длина считаем по значению родителя
 					info.Ref = st.DisplayRef(s.Ref)
 					if r, _, ok := st.ResolveSecret(proj, k); ok {
-						val, info.Enc = r.Value, r.Enc
+						val, info.Enc = r.Val, r.Enc
 					} else {
-						val = ""
+						val = store.Text("") // битая ссылка: длина 0 и отпечаток пустого, как раньше
 					}
 				}
 				if info.Enc == store.EncB64 {
-					info.Chars = decodedB64Len(val) // размер исходных байт, а не длина base64-текста
+					info.Chars = val.DecodedLen() // размер исходных байт, а не длина base64-текста
 				} else {
-					info.Chars = len([]rune(val))
+					info.Chars = val.Chars()
 				}
-				info.Fingerprint = store.Fingerprint(mkey, val)
+				info.Fingerprint = val.Fingerprint(mkey)
 				out = append(out, info)
 			}
 			return out
@@ -381,6 +381,16 @@ func runCommand(args []string) int {
 		die("команда не найдена: %s", tail[0])
 	}
 
+	var fenv map[string]string
+	cleanup := func() {}
+	if len(mounts) > 0 {
+		fenv, cleanup, err = materializeMounts(st, mounts) // при ошибке прибирает за собой сам
+		if err != nil {
+			dieK(kindIO, "%v", err)
+		}
+	}
+	st.Close() // команда может работать часами — снимок стора ей не нужен
+
 	if len(mounts) == 0 {
 		if verbose {
 			fmt.Fprintf(os.Stderr, "[%s → env += %s]\n", proj, strings.Join(store.SortedKeys(extra), ", "))
@@ -393,10 +403,6 @@ func runCommand(args []string) int {
 		return code // на unix недостижимо: exec замещает процесс (см. exec_<os>.go)
 	}
 
-	fenv, cleanup, err := materializeMounts(st, mounts) // при ошибке прибирает за собой сам
-	if err != nil {
-		dieK(kindIO, "%v", err)
-	}
 	for k, v := range fenv {
 		if _, clash := extra[k]; clash {
 			warnf("env-ключ %s из стора перекрыт --file — в env уйдёт путь файла, не значение", k)
@@ -477,7 +483,7 @@ func exportCommand(args []string) int {
 		case !includeFiles && keys[k].IsFile(): // текстовый kind: file — не env-значение, а файл
 			fileSkipped = append(fileSkipped, k)
 		default:
-			b.WriteString(dotenv.Line(k, keys[k].Value) + "\n")
+			b.WriteString(dotenv.Line(k, mustText(keys[k].Val)) + "\n")
 			written = append(written, k)
 		}
 	}
@@ -485,6 +491,7 @@ func exportCommand(args []string) int {
 		die("в %s только файловые ключи — .env не из чего собрать (--include-files впишет текстовые; sec get %s/<KEY> --out <файл>)",
 			proj, st.DisplayProj(proj))
 	}
+	st.Close() // запись может уйти по ssh — снимок стора не держим
 	if err := writeSecretFile(file, []byte(b.String())); err != nil {
 		dieK(kindIO, "запись %s: %v", file, err)
 	}
@@ -642,12 +649,11 @@ func parseImport(data string, forceJSON bool) (map[string]string, []string) {
 // writeImported вливает набор KEY=VALUE в проект (общее для import из .env и из
 // Infisical): существующие значения уходят в историю, новые добавляются.
 func writeImported(proj string, kv map[string]string, source string) (int, int) {
-	unlock := store.Lock()
-	defer unlock()
-	st, mkey, _, err := store.Open(true)
+	st, mkey, _, err := store.Begin(true)
 	if err != nil {
 		dieStore(err)
 	}
+	defer st.Close()
 	keys := st.Project(proj)
 	added, updated, skipped := 0, 0, 0
 	var written []string
@@ -664,7 +670,7 @@ func writeImported(proj string, kv map[string]string, source string) (int, int) 
 		}
 		written = append(written, k)
 	}
-	if err := store.Save(st, mkey); err != nil {
+	if err := st.Commit(); err != nil {
 		dieK(kindStore, "запись хранилища: %v", err)
 	}
 	audit.Record("import", proj, fmt.Sprintf("%s (новых %d, обновлено %d, пропущено %d)", source, added, updated, skipped))
@@ -734,6 +740,17 @@ func logCommand(args []string) int {
 	return 0
 }
 
+// formatLabel — подпись формата стора для info/doctor.
+func formatLabel(f string) string {
+	switch f {
+	case "v2":
+		return ", формат SECSTOR2 — один файл; перевести: sec migrate"
+	case "v3":
+		return ", формат SQLite с шифрованием значений"
+	}
+	return ""
+}
+
 func infoCommand(args []string) int {
 	fs := newFlagSet("info")
 	asJSON := jsonMode
@@ -741,6 +758,7 @@ func infoCommand(args []string) int {
 
 	out := struct {
 		Store    string `json:"store"`
+		Format   string `json:"format,omitempty"` // v2 — SECSTOR2 (один файл), v3 — SQLite, none — ещё не создан
 		Size     int64  `json:"size"`
 		Backend  string `json:"backend"`
 		Audit    string `json:"audit"`
@@ -751,22 +769,24 @@ func infoCommand(args []string) int {
 	if fi, err := os.Stat(store.Path()); err == nil {
 		out.Size = fi.Size()
 	}
-	store, _, backend, err := store.Open(false)
+	st, _, backend, err := store.Open(false)
 	if err != nil {
 		out.Error = err.Error()
 	} else {
 		out.Backend = backend
-		out.Projects = len(store.Projects)
-		for _, keys := range store.Projects {
+		out.Format = st.Format()
+		out.Projects = len(st.Projects)
+		for _, keys := range st.Projects {
 			out.Keys += len(keys)
 		}
+		st.Close()
 	}
 
 	if asJSON {
 		emit(out)
 		return 0
 	}
-	fmt.Fprintf(stdout, "хранилище:   %s (%d байт)\n", out.Store, out.Size)
+	fmt.Fprintf(stdout, "хранилище:   %s (%d байт%s)\n", out.Store, out.Size, formatLabel(out.Format))
 	fmt.Fprintf(stdout, "журнал:      %s\n", out.Audit)
 	if out.Error != "" {
 		fmt.Fprintf(stdout, "мастер-ключ: %s\n", out.Error)

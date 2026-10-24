@@ -64,6 +64,7 @@ func pushCommand(args []string) int {
 	// push — миграция в командный источник истины, не env-инъекция: текстовые
 	// файловые (kind: file) уходят как есть, ARG_MAX здесь ни при чём
 	kv := selectKeys(keys, only, st.DisplayProj(sp), true)
+	st.Close() // дальше чужой CLI и сеть — снимок стора не держим
 
 	if err := infisical.Push(infisical.Ref{Env: ienv, Path: path, ProjectID: projectID, Token: token}, kv); err != nil {
 		dieK(kindAPI, "%v", err)

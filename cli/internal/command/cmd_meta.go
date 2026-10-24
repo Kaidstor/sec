@@ -12,6 +12,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -114,12 +115,11 @@ func metaCommand(args []string) int {
 		return 0
 	}
 
-	unlock := store.Lock()
-	defer unlock()
-	st, mkey, _, err := store.Open(false)
+	st, _, _, err := store.Begin(false)
 	if err != nil {
 		dieStore(err)
 	}
+	defer st.Close()
 	if _, ok := st.Projects[proj][key]; !ok {
 		if _, org, source, found := st.Lookup(proj, key); found && org == store.OriginExtend {
 			dieK(kindConflict, "%s/%s наследуется из %s — правь метаданные в родителе: sec meta %s", proj, key, source, st.DisplayRef(source))
@@ -168,7 +168,7 @@ func metaCommand(args []string) int {
 		}
 	}
 	st.Projects[proj][key] = sec
-	if err := store.Save(st, mkey); err != nil {
+	if err := st.Commit(); err != nil {
 		dieK(kindStore, "запись хранилища: %v", err)
 	}
 	audit.Record("meta", proj+"/"+key, "")
@@ -332,12 +332,22 @@ func doctorCommand(args []string) int {
 
 	// права файла хранилища: unix — POSIX 0600, Windows — DACL без широких групп
 	// (реализации — perms_unix.go / perms_windows.go)
-	if fi, err := os.Stat(store.Path()); err == nil {
-		if msg, ok := storePermsStatus(store.Path(), fi); ok {
-			okline("%s", msg)
-		} else {
-			warn("%s", msg)
+	// -wal/-shm — часть базы SQLite, права у них должны быть те же
+	for _, p := range []string{store.Path(), store.Path() + "-wal", store.Path() + "-shm"} {
+		if fi, err := os.Stat(p); err == nil {
+			if msg, ok := storePermsStatus(p, fi); ok {
+				okline("%s", msg)
+			} else {
+				warn("%s", msg)
+			}
 		}
+	}
+	// недособранные файлы: прерванная миграция/запись (зашифрованы, но место занимают)
+	if left, _ := filepath.Glob(store.Path() + ".*.tmp"); len(left) > 0 {
+		warn("остались временные файлы прерванной записи/миграции (зашифрованы, можно удалить): %s", strings.Join(left, ", "))
+	}
+	if baks, _ := filepath.Glob(store.Path() + ".v2-*.bak"); len(baks) > 0 {
+		okline("копий прежнего формата после sec migrate: %d (удали, когда убедишься, что всё работает)", len(baks))
 	}
 
 	st, mkey, backend, err := store.Open(false)
@@ -345,7 +355,13 @@ func doctorCommand(args []string) int {
 		warn("хранилище недоступно: %v", err)
 		return done()
 	}
+	defer st.Close()
 	okline("мастер-ключ: бэкенд %s", backend)
+	if st.Format() == "v2" {
+		okline("формат SECSTOR2 — каждая команда читает стор целиком; ускорить: sec migrate")
+	} else {
+		okline("формат: %s", st.Format())
+	}
 
 	// доступность журнала на запись
 	if f, err := os.OpenFile(audit.Path(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600); err == nil {
@@ -365,7 +381,7 @@ func doctorCommand(args []string) int {
 				continue // ссылка — своего значения нет, дубли ищем у родителя
 			}
 			total++
-			fp := store.Fingerprint(mkey, s.Value)
+			fp := s.Val.Fingerprint(mkey)
 			fps[fp] = append(fps[fp], p+"/"+k)
 		}
 	}

@@ -23,7 +23,7 @@ var completionSubcommands = []string{
 	"meta", "otp", "ls", "find", "diff", "mv", "cp", "link", "unlink", "extend",
 	"rm", "run", "export", "deploy", "import", "push", "check", "scan", "redact",
 	"render", "share", "stale", "doctor", "backup", "restore", "sync", "rekey",
-	"log", "info", "stats", "skills", "completion", "version", "help",
+	"migrate", "log", "info", "stats", "skills", "completion", "version", "help",
 }
 
 // knownCommands — те же имена множеством: счётчик использования (recordUsage)
@@ -58,6 +58,7 @@ var fileCommandSet = map[string]bool{
 // completionFlags — флаги по подкомандам (подсказки для дополнения; держать
 // примерно в синхроне с флагами команд — рассинхрон не критичен, лишь косметика).
 var completionFlags = map[string][]string{
+	"migrate": {"--to-v2"},
 	"skills":  {"--target", "--dir", "--link", "--force"},
 	"set":     {"--clipboard", "--clear", "--stdin", "--from-file", "--note", "--kind", "--override"},
 	"gen":     {"--len", "--symbols", "--clip", "--note", "--kind"},

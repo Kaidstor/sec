@@ -38,14 +38,25 @@ func testStore(t *testing.T) {
 	t.Setenv("SEC_STORE", filepath.Join(dir, "store.enc"))
 	t.Setenv("SEC_KEY", strings.Repeat("ab", 32))
 	t.Setenv("SEC_NO_USAGE", "1")
-	st, key, _, err := store.Open(true)
+	t.Setenv("SEC_KEY_FILE", filepath.Join(dir, "key"))
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "config"))
+	t.Cleanup(store.CloseAll)
+	st, _, _, err := store.Begin(true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	store.Put(st.Project("demo"), "TOKEN", "tok-value-123456")
-	if err := store.Save(st, key); err != nil {
+	if err := st.Commit(); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func txtOf(v store.Value) string {
+	s, err := v.Load()
+	if err != nil {
+		panic(err)
+	}
+	return s
 }
 
 // runCLI прогоняет Run и возвращает код и настоящий stdout.

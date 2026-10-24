@@ -32,23 +32,22 @@ func linkCommand(args []string) int {
 		die("нельзя ссылать ключ сам на себя")
 	}
 
-	unlock := store.Lock()
-	defer unlock()
-	st, mkey, _, err := store.Open(true)
+	st, _, _, err := store.Begin(true)
 	if err != nil {
 		dieStore(err)
 	}
+	defer st.Close()
 	if _, _, _, ok := st.Lookup(pp, pk); !ok {
 		dieK(kindConflict, "родитель %s/%s не найден — сперва заведи его: sec set %s/%s", pp, pk, st.DisplayProj(pp), pk)
 	}
 	if cur, ok := st.Projects[cp][ck]; ok && cur.Ref == "" && !force {
 		dieK(kindConflict, "%s/%s хранит собственное значение — sec link --force заменит его ссылкой (значение не сохранится)", cp, ck)
 	}
-	st.Project(cp)[ck] = store.Secret{Ref: pp + "/" + pk, UpdatedAt: store.Now()}
+	st.Project(cp)[ck] = store.Secret{Val: store.Text(""), Ref: pp + "/" + pk, UpdatedAt: store.Now()}
 	if _, _, ok := st.ResolveSecret(cp, ck); !ok {
 		dieK(kindConflict, "ссылка создала бы цикл — отклонено")
 	}
-	if err := store.Save(st, mkey); err != nil {
+	if err := st.Commit(); err != nil {
 		dieK(kindStore, "запись хранилища: %v", err)
 	}
 	audit.Record("link", cp+"/"+ck, "→ "+pp+"/"+pk)
@@ -65,12 +64,11 @@ func unlinkCommand(args []string) int {
 	_ = fs.Parse(rest)
 	proj, key := resolveKeyRef(ref, fs, "sec unlink <proj>/<KEY>")
 
-	unlock := store.Lock()
-	defer unlock()
-	st, mkey, _, err := store.Open(false)
+	st, _, _, err := store.Begin(false)
 	if err != nil {
 		dieStore(err)
 	}
+	defer st.Close()
 	own, ok := st.Projects[proj][key]
 	if !ok || own.Ref == "" {
 		dieK(kindConflict, "%s/%s — не ссылка, отвязывать нечего", proj, key)
@@ -78,7 +76,7 @@ func unlinkCommand(args []string) int {
 	if drop {
 		delete(st.Project(proj), key)
 		st.Prune(proj)
-		if err := store.Save(st, mkey); err != nil {
+		if err := st.Commit(); err != nil {
 			dieK(kindStore, "запись хранилища: %v", err)
 		}
 		audit.Record("unlink", proj+"/"+key, "drop → "+own.Ref)
@@ -90,14 +88,14 @@ func unlinkCommand(args []string) int {
 	if !resolved {
 		dieK(kindConflict, "ссылка %s/%s → %s битая; удалить ключ: sec unlink %s --drop", proj, key, own.Ref, ref)
 	}
-	st.Project(proj)[key] = store.Secret{Value: sec.Value, Enc: sec.Enc, UpdatedAt: store.Now(), Meta: own.Meta}
-	if err := store.Save(st, mkey); err != nil {
+	st.Project(proj)[key] = store.Secret{Val: sec.Val, Enc: sec.Enc, UpdatedAt: store.Now(), Meta: own.Meta}
+	if err := st.Commit(); err != nil {
 		dieK(kindStore, "запись хранилища: %v", err)
 	}
 	audit.Record("unlink", proj+"/"+key, "материализовано из "+own.Ref)
 	fmt.Fprintf(stdout, "%s/%s: отвязан от %s — теперь собственное значение (%d символов, скрыто)\n",
-		proj, key, own.Ref, len([]rune(sec.Value)))
-	emit(map[string]any{"ref": proj + "/" + key, "parent": own.Ref, "dropped": false, "chars": len([]rune(sec.Value))})
+		proj, key, own.Ref, sec.Val.Chars())
+	emit(map[string]any{"ref": proj + "/" + key, "parent": own.Ref, "dropped": false, "chars": sec.Val.Chars()})
 	return 0
 }
 
@@ -145,19 +143,18 @@ func extendCommand(args []string) int {
 		die("--from и --remove вместе не имеют смысла")
 	}
 
-	unlock := store.Lock()
-	defer unlock()
-	st, mkey, _, err := store.Open(true)
+	st, _, _, err := store.Begin(true)
 	if err != nil {
 		dieStore(err)
 	}
+	defer st.Close()
 
 	if remove != "" {
 		parent := resolveRelProj(remove, profile)
 		if !st.RemoveExtend(proj, parent) {
 			dieK(kindConflict, "%s не наследует от %s", proj, parent)
 		}
-		if err := store.Save(st, mkey); err != nil {
+		if err := st.Commit(); err != nil {
 			dieK(kindStore, "запись хранилища: %v", err)
 		}
 		audit.Record("extend", proj, "− "+parent)
@@ -173,7 +170,7 @@ func extendCommand(args []string) int {
 	if !st.AddExtend(proj, parent) {
 		dieK(kindConflict, "нельзя наследовать от %s — это создало бы цикл (или ссылку на себя)", parent)
 	}
-	if err := store.Save(st, mkey); err != nil {
+	if err := st.Commit(); err != nil {
 		dieK(kindStore, "запись хранилища: %v", err)
 	}
 	audit.Record("extend", proj, "+ "+parent)

@@ -57,8 +57,8 @@ func TestMaterializeMounts(t *testing.T) {
 	bin := []byte{0x01, 0x00, 0xFF, 0x42}
 	st := &store.Store{Projects: map[string]map[string]store.Secret{
 		"keys": {
-			"PEM": {Value: "pem-text", Meta: &store.Meta{Kind: "file", Filename: "app.pem"}},
-			"P12": {Value: base64.StdEncoding.EncodeToString(bin), Enc: store.EncB64},
+			"PEM": {Val: store.Text("pem-text"), Meta: &store.Meta{Kind: "file", Filename: "app.pem"}},
+			"P12": {Val: store.Text(base64.StdEncoding.EncodeToString(bin)), Enc: store.EncB64},
 		},
 	}}
 
@@ -102,7 +102,7 @@ func TestMaterializeMounts(t *testing.T) {
 
 func TestMaterializeMountsExplicitDest(t *testing.T) {
 	st := &store.Store{Projects: map[string]map[string]store.Secret{
-		"keys": {"PEM": {Value: "x"}},
+		"keys": {"PEM": {Val: store.Text("x")}},
 	}}
 	dest := filepath.Join(t.TempDir(), "my.pem")
 	mounts, _ := parseFileMounts([]string{"keys/PEM:" + dest}, "keys")

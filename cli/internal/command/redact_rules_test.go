@@ -39,7 +39,7 @@ func TestRedactRulesMixedStoreAndUnknown(t *testing.T) {
 	// Известное значение — под своим именем, неизвестное — правилом; сигнал
 	// «скрыто из стора» не должен глушить находку правил.
 	st := &store.Store{Version: 1, Projects: map[string]map[string]store.Secret{
-		"proxy": {"PASSWORD": {Value: "known-proxy-password"}},
+		"proxy": {"PASSWORD": {Val: store.Text("known-proxy-password")}},
 	}}
 	in := `{"PROXY_PASSWORD":"known-proxy-password","POSTGRES_PASSWORD":"unknown-pg-password-x"}` + "\n"
 	out, rd := redactRules(t, st, in, true)

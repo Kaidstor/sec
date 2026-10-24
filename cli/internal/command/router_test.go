@@ -11,9 +11,9 @@ import (
 // попадают: env копируется каждому дочернему процессу и упирается в ARG_MAX.
 func TestSelectKeysSkipsFileSecrets(t *testing.T) {
 	keys := map[string]store.Secret{
-		"TOKEN": {Value: "tok"},
-		"PEM":   {Value: "pem-text", Meta: &store.Meta{Kind: "file", Filename: "app.pem"}},
-		"BIN":   {Value: "AAAA", Enc: store.EncB64},
+		"TOKEN": {Val: store.Text("tok")},
+		"PEM":   {Val: store.Text("pem-text"), Meta: &store.Meta{Kind: "file", Filename: "app.pem"}},
+		"BIN":   {Val: store.Text("AAAA"), Enc: store.EncB64},
 	}
 	out := selectKeys(keys, "", "proj", false)
 	if len(out) != 1 || out["TOKEN"] != "tok" {

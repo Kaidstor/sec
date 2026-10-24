@@ -1,15 +1,13 @@
 package store
 
-// Хранилище: один файл, целиком зашифрованный XChaCha20-Poly1305. Мастер-ключ
-// отдельно (keyring.go). Значения секретов никогда не пишутся на диск
-// открытым текстом и не попадают в argv. Запись атомарная (tmp + rename)
-// под файловой блокировкой.
+// Доменная модель стора: проекты, ключи, версии, ссылки и наследование.
+// Хранение — session.go (снимки и транзакции записи), форматы на диске —
+// sqlite.go (SECSTOR3, локальная SQLite с шифрованием в приложении) и
+// legacy.go (SECSTOR2, один зашифрованный JSON). Переносимая форма для
+// backup/sync — portable.go.
 
 import (
-	"crypto/rand"
 	"encoding/base64"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,16 +15,10 @@ import (
 	"sort"
 	"strings"
 	"time"
-
-	"golang.org/x/crypto/chacha20poly1305"
-
-	"github.com/kaidstor/sec/internal/keyring"
 )
 
-const storeMagic = "SECSTOR2"
-
-// storeVersion — версия схемы стора. Save всегда пишет текущую, Open
-// отказывается открывать более новую: бинарь, не знающий свежих полей
+// storeVersion — версия переносимой схемы (JSON внутри SECSTOR2 и бэкапов).
+// Открытие отказывается от более новой: бинарь, не знающий свежих полей
 // (например enc у бинарных секретов), молча уничтожил бы их при записи.
 // Версия 2 — появилось поле Secret.Enc (бинарные файловые секреты).
 const storeVersion = 2
@@ -34,7 +26,7 @@ const storeVersion = 2
 // maxHistory — сколько предыдущих значений ключа хранить (для get --prev / undo).
 const maxHistory = 5
 
-// EncB64 — маркер бинарного значения: Value содержит base64 сырых байт
+// EncB64 — маркер бинарного значения: значение — base64 сырых байт
 // (файловые секреты — сертификаты, ключи, keystore). Пустой Enc — обычный текст.
 const EncB64 = "b64"
 
@@ -42,9 +34,9 @@ const EncB64 = "b64"
 const KindConfig = "config"
 
 type Version struct {
-	Value     string `json:"value"`
-	Enc       string `json:"enc,omitempty"`
-	UpdatedAt string `json:"updatedAt"`
+	Val       Value
+	Enc       string
+	UpdatedAt string
 }
 
 // Meta — несекретные метаданные ключа: описание, назначение, политика ротации.
@@ -60,13 +52,13 @@ type Meta struct {
 }
 
 type Secret struct {
-	Value     string    `json:"value"`
-	Enc       string    `json:"enc,omitempty"` // "" — текст; EncB64 — бинарные байты в base64
-	Ref       string    `json:"ref,omitempty"` // внутренний "proj/KEY" — живая ссылка на чужое значение; своего Value нет
-	UpdatedAt string    `json:"updatedAt"`
-	History   []Version `json:"history,omitempty"` // прошлые значения, новейшее первым (для undo / get --prev)
-	RedoStack []Version `json:"redo,omitempty"`    // отменённые через undo значения, ближайшее первым (для redo)
-	Meta      *Meta     `json:"meta,omitempty"`    // несекретные метаданные (nil, если не заданы)
+	Val       Value
+	Enc       string    // "" — текст; EncB64 — бинарные байты в base64
+	Ref       string    // внутренний "proj/KEY" — живая ссылка на чужое значение; своего значения нет
+	UpdatedAt string    //
+	History   []Version // прошлые значения, новейшее первым (для undo / get --prev)
+	RedoStack []Version // отменённые через undo значения, ближайшее первым (для redo)
+	Meta      *Meta     // несекретные метаданные (nil, если не заданы)
 }
 
 // IsBinary — значение бинарное (файловый секрет): в env/шаблон/буфер его не
@@ -85,23 +77,43 @@ func (s Secret) IsFile() bool {
 // показывают открытым текстом — отпечатка мало, чтобы понять «что там сейчас».
 func (s Secret) IsConfig() bool { return s.Meta != nil && s.Meta.Kind == KindConfig }
 
-// Bytes — сырые байты значения: для бинарных — декодированный base64,
-// для текста — байты строки как есть.
-func (s Secret) Bytes() ([]byte, error) {
-	if s.Enc == EncB64 {
-		b, err := base64.StdEncoding.DecodeString(s.Value)
+// Bytes — сырые байты текущего значения: для бинарных — декодированный
+// base64, для текста — байты строки как есть.
+func (s Secret) Bytes() ([]byte, error) { return Version{s.Val, s.Enc, s.UpdatedAt}.Bytes() }
+
+// Bytes — сырые байты значения версии (см. Secret.Bytes).
+func (v Version) Bytes() ([]byte, error) {
+	text, err := v.Val.Load()
+	if err != nil {
+		return nil, err
+	}
+	if v.Enc == EncB64 {
+		b, err := base64.StdEncoding.DecodeString(text)
 		if err != nil {
 			return nil, fmt.Errorf("битый base64 бинарного значения: %w", err)
 		}
 		return b, nil
 	}
-	return []byte(s.Value), nil
+	return []byte(text), nil
+}
+
+// Loaded — копия секрета с расшифрованным текущим значением: она переживает
+// Close снимка (run/deploy/share закрывают стор до дочерних процессов и сети).
+func (s Secret) Loaded() (Secret, error) {
+	text, err := s.Val.Load()
+	if err != nil {
+		return s, err
+	}
+	s.Val = Text(text)
+	return s, nil
 }
 
 type Store struct {
-	Version  int                          `json:"version"`
-	Projects map[string]map[string]Secret `json:"projects"`
-	Extends  map[string][]string          `json:"extends,omitempty"` // proj → родительские пачки: их ключи видны в proj read-only
+	Version  int
+	Projects map[string]map[string]Secret
+	Extends  map[string][]string // proj → родительские пачки: их ключи видны в proj read-only
+
+	sess *session // nil — стор собран в памяти (тесты, бэкап)
 }
 
 // project возвращает карту ключей проекта, создавая её при отсутствии.
@@ -140,16 +152,21 @@ func Put(m map[string]Secret, key, val string) bool { return PutEnc(m, key, val,
 
 // PutEnc — Put с явной кодировкой значения ("" — текст, EncB64 — бинарь).
 func PutEnc(m map[string]Secret, key, val, enc string) bool {
+	return putValue(m, key, Text(val), enc)
+}
+
+func putValue(m map[string]Secret, key string, val Value, enc string) bool {
 	old, existed := m[key]
-	sec := Secret{Value: val, Enc: enc, UpdatedAt: Now()}
+	sec := Secret{Val: val, Enc: enc, UpdatedAt: Now()}
 	if existed {
 		sec.Meta = old.Meta // метаданные описывают ключ, а не значение — переносим
-		if old.Value == val && old.Enc == enc {
+		if old.Val.equal(val) && old.Enc == enc {
 			// значение не изменилось — это no-op, сохраняем историю и redo как есть.
+			sec.Val = old.Val
 			sec.History = old.History
 			sec.RedoStack = old.RedoStack
 		} else {
-			sec.History = append([]Version{{old.Value, old.Enc, old.UpdatedAt}}, old.History...)
+			sec.History = append([]Version{{old.Val, old.Enc, old.UpdatedAt}}, old.History...)
 			if len(sec.History) > maxHistory {
 				sec.History = sec.History[:maxHistory]
 			}
@@ -171,11 +188,11 @@ func (s Secret) Undo() (Secret, bool) {
 	}
 	prev := s.History[0]
 	return Secret{
-		Value:     prev.Value,
+		Val:       prev.Val,
 		Enc:       prev.Enc,
 		UpdatedAt: prev.UpdatedAt, // таймстемп версии сохраняем честным, не Now()
 		History:   append([]Version(nil), s.History[1:]...),
-		RedoStack: append([]Version{{s.Value, s.Enc, s.UpdatedAt}}, s.RedoStack...),
+		RedoStack: append([]Version{{s.Val, s.Enc, s.UpdatedAt}}, s.RedoStack...),
 		Meta:      s.Meta,
 	}, true
 }
@@ -187,12 +204,12 @@ func (s Secret) Redo() (Secret, bool) {
 		return s, false
 	}
 	fwd := s.RedoStack[0]
-	hist := append([]Version{{s.Value, s.Enc, s.UpdatedAt}}, s.History...)
+	hist := append([]Version{{s.Val, s.Enc, s.UpdatedAt}}, s.History...)
 	if len(hist) > maxHistory {
 		hist = hist[:maxHistory]
 	}
 	return Secret{
-		Value:     fwd.Value,
+		Val:       fwd.Val,
 		Enc:       fwd.Enc,
 		UpdatedAt: fwd.UpdatedAt,
 		History:   hist,
@@ -203,29 +220,47 @@ func (s Secret) Redo() (Secret, bool) {
 
 // forget возвращает секрет без истории и redo (текущее значение и мета остаются).
 func (s Secret) Forget() Secret {
-	return Secret{Value: s.Value, Enc: s.Enc, UpdatedAt: s.UpdatedAt, Meta: s.Meta}
+	return Secret{Val: s.Val, Enc: s.Enc, UpdatedAt: s.UpdatedAt, Meta: s.Meta}
 }
 
 // Merge вливает src в dst: значения из src побеждают, вытесненные
 // локальные уходят в историю (ничего не теряется). Метаданные подтягиваются из
-// src, если у dst их не было. Возвращает счётчики добавленных/обновлённых.
-func Merge(dst, src *Store) (added, updated int) {
-	for p, keys := range src.Projects {
+// src, если у dst их не было. Ключ, которого в dst нет, переносится целиком —
+// с историей, redo и ссылкой. Входящая ссылка поверх локального собственного
+// значения не применяется (у ссылки нет истории, локальное значение пропало
+// бы) — такие адреса возвращаются в skipped.
+func Merge(dst, src *Store) (added, updated int, skipped []string) {
+	for _, p := range SortedKeys(src.Projects) {
+		keys := src.Projects[p]
 		dp := dst.Project(p)
-		for k, s := range keys {
+		for _, k := range SortedKeys(keys) {
+			s := keys[k]
 			cur, exists := dp[k]
-			if exists && cur.Value == s.Value && cur.Enc == s.Enc {
+			if !exists {
+				dp[k] = s
+				added++
+				continue
+			}
+			if s.Ref != "" || cur.Ref != "" {
+				switch {
+				case s.Ref == cur.Ref:
+				case s.Ref != "" && cur.Ref == "":
+					skipped = append(skipped, p+"/"+k)
+				default: // у локальной ссылки своего значения нет — терять нечего
+					dp[k] = s
+					updated++
+				}
+				continue
+			}
+			if cur.Val.equal(s.Val) && cur.Enc == s.Enc {
 				if cur.Meta == nil && s.Meta != nil {
 					cur.Meta = s.Meta
 					dp[k] = cur
 				}
 				continue
 			}
-			if PutEnc(dp, k, s.Value, s.Enc) {
-				updated++
-			} else {
-				added++
-			}
+			putValue(dp, k, s.Val, s.Enc)
+			updated++
 			if s.Meta != nil {
 				e := dp[k]
 				if e.Meta == nil {
@@ -241,7 +276,7 @@ func Merge(dst, src *Store) (added, updated int) {
 			dst.AddExtend(p, parent)
 		}
 	}
-	return added, updated
+	return added, updated, skipped
 }
 
 // ---------------------------------------------------------------------------
@@ -497,107 +532,6 @@ func (st *Store) Extenders(parent string) []string {
 		}
 	}
 	return out
-}
-
-// Open загружает и расшифровывает хранилище. create=true разрешает
-// инициализацию (генерацию мастер-ключа и пустого стора) при первом запуске.
-func Open(create bool) (*Store, []byte, string, error) {
-	key, backend, err := keyring.Load(create)
-	if err != nil {
-		return nil, nil, "", err
-	}
-	st := &Store{Version: storeVersion, Projects: map[string]map[string]Secret{}}
-	data, err := os.ReadFile(Path())
-	if errors.Is(err, os.ErrNotExist) {
-		return st, key, backend, nil
-	}
-	if err != nil {
-		return nil, nil, "", err
-	}
-	pt, err := decrypt(key, data)
-	if err != nil {
-		return nil, nil, "", err
-	}
-	if err := json.Unmarshal(pt, st); err != nil {
-		return nil, nil, "", fmt.Errorf("хранилище повреждено: %w", err)
-	}
-	if st.Version > storeVersion {
-		return nil, nil, "", fmt.Errorf("хранилище версии %d, эта сборка sec понимает только ≤ %d — обнови sec (запись старой версией уничтожила бы новые поля)", st.Version, storeVersion)
-	}
-	if st.Projects == nil {
-		st.Projects = map[string]map[string]Secret{}
-	}
-	return st, key, backend, nil
-}
-
-// Lock берёт эксклюзивную файловую блокировку на время мутации хранилища
-// (защита от параллельных записей read-modify-write). Best-effort: если lock
-// недоступен, работаем без него.
-func Lock() func() {
-	p := Path() + ".lock"
-	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
-		return func() {}
-	}
-	f, err := os.OpenFile(p, os.O_CREATE|os.O_RDWR, 0o600)
-	if err != nil {
-		return func() {}
-	}
-	_ = flockLock(f)
-	return func() {
-		_ = flockUnlock(f)
-		_ = f.Close()
-	}
-}
-
-func Save(st *Store, key []byte) error {
-	st.Version = storeVersion
-	pt, err := json.MarshalIndent(st, "", "  ")
-	if err != nil {
-		return err
-	}
-	ct, err := encrypt(key, pt)
-	if err != nil {
-		return err
-	}
-	p := Path()
-	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
-		return err
-	}
-	tmp := p + ".tmp"
-	if err := os.WriteFile(tmp, ct, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, p)
-}
-
-func encrypt(key, plaintext []byte) ([]byte, error) {
-	aead, err := chacha20poly1305.NewX(key)
-	if err != nil {
-		return nil, err
-	}
-	nonce := make([]byte, aead.NonceSize())
-	if _, err := rand.Read(nonce); err != nil {
-		return nil, err
-	}
-	out := append([]byte(storeMagic), nonce...)
-	return aead.Seal(out, nonce, plaintext, []byte(storeMagic)), nil
-}
-
-func decrypt(key, data []byte) ([]byte, error) {
-	aead, err := chacha20poly1305.NewX(key)
-	if err != nil {
-		return nil, err
-	}
-	head := len(storeMagic) + aead.NonceSize()
-	if len(data) < head || string(data[:len(storeMagic)]) != storeMagic {
-		return nil, fmt.Errorf("%s: не похоже на хранилище sec", Path())
-	}
-	nonce := data[len(storeMagic):head]
-	pt, err := aead.Open(nil, nonce, data[head:], []byte(storeMagic))
-	if err != nil {
-		return nil, errors.New("не удалось расшифровать хранилище: неверный мастер-ключ или файл повреждён")
-	}
-	return pt, nil
 }
 
 // ---------------------------------------------------------------------------

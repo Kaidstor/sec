@@ -62,7 +62,9 @@ func deployCommand(args []string) int {
 	if err != nil {
 		dieStore(err)
 	}
-	keys := envKeysOf(st, proj, only)
+	keys := loadedKeys(envKeysOf(st, proj, only))
+	projLabel := st.DisplayProj(proj)
+	st.Close() // дальше ssh, подтверждение и --after — снимок стора не держим
 
 	data, exists, err := t.read(sudo)
 	if err != nil {
@@ -74,7 +76,7 @@ func deployCommand(args []string) int {
 	if ml := dotenv.MultilineKeys(string(data)); len(ml) > 0 {
 		dieK(kindConflict, "в %s есть многострочные значения (%s) — построчный merge порвал бы их пополам.\n"+
 			"     Такой файл править руками; многострочному секрету в .env не место (sec get %s/<KEY> --out <файл>)",
-			t, strings.Join(ml, ", "), st.DisplayProj(proj))
+			t, strings.Join(ml, ", "), projLabel)
 	}
 	fileKV := parseEnvTargetFile(t, data)
 	if only != "" { // ключи вне --only не наши: в отчёт как «только на хосте» им нельзя
@@ -172,14 +174,14 @@ func buildEnvFile(proj, orig string, keys map[string]store.Secret, entries []env
 		fmt.Fprintf(&b, "# сгенерировано sec из проекта %s — не коммитить\n", proj)
 		names := store.SortedKeys(keys)
 		for _, k := range names {
-			b.WriteString(dotenv.Line(k, keys[k].Value) + "\n")
+			b.WriteString(dotenv.Line(k, mustText(keys[k].Val)) + "\n")
 		}
 		return b.String(), names
 	}
 	kv := map[string]string{}
 	for _, e := range entries {
 		if e.status == envDiffer || e.status == envMissing {
-			kv[e.key] = keys[e.key].Value
+			kv[e.key] = mustText(keys[e.key].Val)
 		}
 	}
 	out, updated, added := dotenv.Merge(orig, kv)
@@ -200,7 +202,7 @@ func verifyDeployed(t envTarget, sudo bool, keys map[string]store.Secret, writte
 	after, _ := dotenv.Parse(string(data))
 	var bad []string
 	for _, k := range written {
-		if store.Fingerprint(mkey, after[k]) != store.Fingerprint(mkey, keys[k].Value) {
+		if store.Fingerprint(mkey, after[k]) != keys[k].Val.Fingerprint(mkey) {
 			bad = append(bad, k)
 		}
 	}

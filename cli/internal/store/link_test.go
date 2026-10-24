@@ -10,17 +10,17 @@ func storeWith(projects map[string]map[string]Secret, extends map[string][]strin
 func TestResolveSecretChain(t *testing.T) {
 	st := storeWith(map[string]map[string]Secret{
 		"app":  {"A": {Ref: "base/X"}, "LOOP1": {Ref: "app/LOOP2"}, "LOOP2": {Ref: "app/LOOP1"}, "DEAD": {Ref: "base/GONE"}},
-		"base": {"X": {Value: "real"}},
+		"base": {"X": {Val: Text("real")}},
 	}, nil)
 
 	// цепочка ссылок доходит до настоящего значения
 	sec, src, ok := st.ResolveSecret("app", "A")
-	if !ok || sec.Value != "real" || src != "base/X" {
-		t.Fatalf("resolveSecret(app/A) = %q, %q, %v; want real, base/X, true", sec.Value, src, ok)
+	if !ok || txt(sec.Val) != "real" || src != "base/X" {
+		t.Fatalf("resolveSecret(app/A) = %q, %q, %v; want real, base/X, true", txt(sec.Val), src, ok)
 	}
 	// собственное значение без ссылки — сразу оно
-	if sec, _, ok := st.ResolveSecret("base", "X"); !ok || sec.Value != "real" {
-		t.Errorf("resolveSecret(base/X) = %q, %v", sec.Value, ok)
+	if sec, _, ok := st.ResolveSecret("base", "X"); !ok || txt(sec.Val) != "real" {
+		t.Errorf("resolveSecret(base/X) = %q, %v", txt(sec.Val), ok)
 	}
 	// битая ссылка — ok=false, source указывает на потерянного родителя
 	if _, src, ok := st.ResolveSecret("app", "DEAD"); ok || src != "base/GONE" {
@@ -34,29 +34,29 @@ func TestResolveSecretChain(t *testing.T) {
 
 func TestLookupExtendAndOverride(t *testing.T) {
 	st := storeWith(map[string]map[string]Secret{
-		"app":   {"Y": {Value: "own-y"}, "R": {Ref: "base/X"}},
-		"base":  {"X": {Value: "base-x"}, "Y": {Value: "base-y"}},
-		"grand": {"G": {Value: "grand-g"}},
+		"app":   {"Y": {Val: Text("own-y")}, "R": {Ref: "base/X"}},
+		"base":  {"X": {Val: Text("base-x")}, "Y": {Val: Text("base-y")}},
+		"grand": {"G": {Val: Text("grand-g")}},
 	}, map[string][]string{
 		"app":  {"base"},
 		"base": {"grand"},
 	})
 
 	// собственный ключ перекрывает унаследованный
-	if sec, org, _, ok := st.Lookup("app", "Y"); !ok || org != OriginOwn || sec.Value != "own-y" {
-		t.Errorf("lookup(app/Y) = %q, org=%d, ok=%v; want own-y/own", sec.Value, org, ok)
+	if sec, org, _, ok := st.Lookup("app", "Y"); !ok || org != OriginOwn || txt(sec.Val) != "own-y" {
+		t.Errorf("lookup(app/Y) = %q, org=%d, ok=%v; want own-y/own", txt(sec.Val), org, ok)
 	}
 	// унаследованный из прямого родителя
-	if sec, org, src, ok := st.Lookup("app", "X"); !ok || org != OriginExtend || sec.Value != "base-x" || src != "base/X" {
-		t.Errorf("lookup(app/X) = %q, org=%d, src=%q, ok=%v; want base-x/extend/base/X", sec.Value, org, src, ok)
+	if sec, org, src, ok := st.Lookup("app", "X"); !ok || org != OriginExtend || txt(sec.Val) != "base-x" || src != "base/X" {
+		t.Errorf("lookup(app/X) = %q, org=%d, src=%q, ok=%v; want base-x/extend/base/X", txt(sec.Val), org, src, ok)
 	}
 	// унаследованный вглубь (дед через родителя)
-	if sec, org, _, ok := st.Lookup("app", "G"); !ok || org != OriginExtend || sec.Value != "grand-g" {
-		t.Errorf("lookup(app/G) = %q, org=%d, ok=%v; want grand-g/extend", sec.Value, org, ok)
+	if sec, org, _, ok := st.Lookup("app", "G"); !ok || org != OriginExtend || txt(sec.Val) != "grand-g" {
+		t.Errorf("lookup(app/G) = %q, org=%d, ok=%v; want grand-g/extend", txt(sec.Val), org, ok)
 	}
 	// собственная ссылка резолвится и помечается как ref
-	if sec, org, src, ok := st.Lookup("app", "R"); !ok || org != OriginRef || sec.Value != "base-x" || src != "base/X" {
-		t.Errorf("lookup(app/R) = %q, org=%d, src=%q, ok=%v; want base-x/ref/base/X", sec.Value, org, src, ok)
+	if sec, org, src, ok := st.Lookup("app", "R"); !ok || org != OriginRef || txt(sec.Val) != "base-x" || src != "base/X" {
+		t.Errorf("lookup(app/R) = %q, org=%d, src=%q, ok=%v; want base-x/ref/base/X", txt(sec.Val), org, src, ok)
 	}
 	// несуществующий ключ
 	if _, _, _, ok := st.Lookup("app", "NOPE"); ok {
@@ -66,8 +66,8 @@ func TestLookupExtendAndOverride(t *testing.T) {
 
 func TestEffectiveKeysMerge(t *testing.T) {
 	st := storeWith(map[string]map[string]Secret{
-		"app":  {"Y": {Value: "own-y"}, "Z": {Value: "own-z"}, "R": {Ref: "base/X"}},
-		"base": {"X": {Value: "base-x"}, "Y": {Value: "base-y"}},
+		"app":  {"Y": {Val: Text("own-y")}, "Z": {Val: Text("own-z")}, "R": {Ref: "base/X"}},
+		"base": {"X": {Val: Text("base-x")}, "Y": {Val: Text("base-y")}},
 	}, map[string][]string{"app": {"base"}})
 
 	eff := st.EffectiveKeys("app")
@@ -76,15 +76,15 @@ func TestEffectiveKeysMerge(t *testing.T) {
 		t.Fatalf("effectiveKeys дал %d ключей, ждали %d: %v", len(eff), len(want), eff)
 	}
 	for k, v := range want {
-		if eff[k].Value != v {
-			t.Errorf("effectiveKeys[%s] = %q; want %q", k, eff[k].Value, v)
+		if txt(eff[k].Val) != v {
+			t.Errorf("effectiveKeys[%s] = %q; want %q", k, txt(eff[k].Val), v)
 		}
 	}
 }
 
 func TestExtendCycleAndDedup(t *testing.T) {
 	st := storeWith(map[string]map[string]Secret{
-		"a": {"K": {Value: "v"}}, "b": {"K": {Value: "v"}}, "c": {"K": {Value: "v"}},
+		"a": {"K": {Val: Text("v")}}, "b": {"K": {Val: Text("v")}}, "c": {"K": {Val: Text("v")}},
 	}, nil)
 
 	if !st.AddExtend("a", "b") {
@@ -123,8 +123,8 @@ func TestExtendCycleAndDedup(t *testing.T) {
 
 func TestReferrersAndExtenders(t *testing.T) {
 	st := storeWith(map[string]map[string]Secret{
-		"base":  {"X": {Value: "v"}, "Y": {Value: "w"}},
-		"app":   {"R": {Ref: "base/X"}, "OWN": {Value: "o"}},
+		"base":  {"X": {Val: Text("v")}, "Y": {Val: Text("w")}},
+		"app":   {"R": {Ref: "base/X"}, "OWN": {Val: Text("o")}},
 		"other": {"Q": {Ref: "base@prod/X"}, "S": {Ref: "base/Y"}},
 	}, map[string][]string{
 		"app":   {"base"},

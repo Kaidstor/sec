@@ -60,11 +60,11 @@ func TestBuildEnvFileReplaceRebuilds(t *testing.T) {
 func TestEnvKeysOfSkipsFiles(t *testing.T) {
 	st := &store.Store{Projects: map[string]map[string]store.Secret{
 		"whois": {
-			"TOKEN":  {Value: "plain"},
-			"CERT":   {Value: "-----BEGIN----", Meta: &store.Meta{Kind: "file"}},
-			"P12":    {Value: "YmluYXJ5", Enc: store.EncB64},
-			"REDIS":  {Value: "redis://x"},
-			"UNUSED": {Value: "y"},
+			"TOKEN":  {Val: store.Text("plain")},
+			"CERT":   {Val: store.Text("-----BEGIN----"), Meta: &store.Meta{Kind: "file"}},
+			"P12":    {Val: store.Text("YmluYXJ5"), Enc: store.EncB64},
+			"REDIS":  {Val: store.Text("redis://x")},
+			"UNUSED": {Val: store.Text("y")},
 		},
 	}}
 	keys := envKeysOf(st, "whois", "")

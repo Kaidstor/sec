@@ -3,7 +3,6 @@ package store
 import (
 	"bytes"
 	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"os"
 	"testing"
@@ -20,7 +19,7 @@ func TestPutSecretHistory(t *testing.T) {
 	}
 
 	Put(m, "K", "v2")
-	if h := m["K"].History; len(h) != 1 || h[0].Value != "v1" {
+	if h := m["K"].History; len(h) != 1 || txt(h[0].Val) != "v1" {
 		t.Errorf("ожидалась история [v1], получено %+v", h)
 	}
 
@@ -48,21 +47,21 @@ func TestUndoRedoWalk(t *testing.T) {
 	s := m["K"]
 	// undo идёт вглубь истории: v3 -> v2 -> v1, затем стена
 	var ok bool
-	if s, ok = s.Undo(); !ok || s.Value != "v2" {
-		t.Fatalf("undo1: ok=%v val=%q", ok, s.Value)
+	if s, ok = s.Undo(); !ok || txt(s.Val) != "v2" {
+		t.Fatalf("undo1: ok=%v val=%q", ok, txt(s.Val))
 	}
-	if s, ok = s.Undo(); !ok || s.Value != "v1" {
-		t.Fatalf("undo2: ok=%v val=%q", ok, s.Value)
+	if s, ok = s.Undo(); !ok || txt(s.Val) != "v1" {
+		t.Fatalf("undo2: ok=%v val=%q", ok, txt(s.Val))
 	}
 	if _, ok = s.Undo(); ok {
 		t.Error("после самой старой версии undo должен упереться в стену")
 	}
 	// redo возвращает вперёд: v1 -> v2 -> v3, затем стена
-	if s, ok = s.Redo(); !ok || s.Value != "v2" {
-		t.Fatalf("redo1: ok=%v val=%q", ok, s.Value)
+	if s, ok = s.Redo(); !ok || txt(s.Val) != "v2" {
+		t.Fatalf("redo1: ok=%v val=%q", ok, txt(s.Val))
 	}
-	if s, ok = s.Redo(); !ok || s.Value != "v3" {
-		t.Fatalf("redo2: ok=%v val=%q", ok, s.Value)
+	if s, ok = s.Redo(); !ok || txt(s.Val) != "v3" {
+		t.Fatalf("redo2: ok=%v val=%q", ok, txt(s.Val))
 	}
 	if _, ok = s.Redo(); ok {
 		t.Error("после самой свежей версии redo должен упереться в стену")
@@ -74,7 +73,7 @@ func TestSetClearsRedo(t *testing.T) {
 	Put(m, "K", "v1")
 	Put(m, "K", "v2") // Value=v2, History=[v1]
 	m["K"], _ = m["K"].Undo()
-	if m["K"].Value != "v1" || len(m["K"].RedoStack) != 1 {
+	if txt(m["K"].Val) != "v1" || len(m["K"].RedoStack) != 1 {
 		t.Fatalf("после undo ожидалось Value=v1, Redo=[v2]; получено %+v", m["K"])
 	}
 	// новое значение поверх отменённого стирает redo-стек
@@ -82,7 +81,7 @@ func TestSetClearsRedo(t *testing.T) {
 	if len(m["K"].RedoStack) != 0 {
 		t.Errorf("set нового значения должен обнулять redo, получено %+v", m["K"].RedoStack)
 	}
-	if h := m["K"].History; len(h) != 1 || h[0].Value != "v1" {
+	if h := m["K"].History; len(h) != 1 || txt(h[0].Val) != "v1" {
 		t.Errorf("ожидалась история [v1], получено %+v", h)
 	}
 }
@@ -96,8 +95,8 @@ func TestForgetScrubsHistory(t *testing.T) {
 	if len(s.History) != 0 || len(s.RedoStack) != 0 {
 		t.Errorf("forget должен вычистить историю и redo, получено %+v", s)
 	}
-	if s.Value != m["K"].Value {
-		t.Errorf("forget должен сохранить текущее значение: было %q, стало %q", m["K"].Value, s.Value)
+	if txt(s.Val) != txt(m["K"].Val) {
+		t.Errorf("forget должен сохранить текущее значение: было %q, стало %q", txt(m["K"].Val), txt(s.Val))
 	}
 }
 
@@ -122,11 +121,11 @@ func TestEncryptDecryptRoundtrip(t *testing.T) {
 	_, _ = rand.Read(key)
 	plain := []byte(`{"projects":{}}`)
 
-	ct, err := encrypt(key, plain)
+	ct, err := legacyEncrypt(key, plain)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := decrypt(key, ct)
+	got, err := legacyDecrypt(key, ct)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,10 +135,10 @@ func TestEncryptDecryptRoundtrip(t *testing.T) {
 
 	wrong := make([]byte, 32)
 	_, _ = rand.Read(wrong)
-	if _, err := decrypt(wrong, ct); err == nil {
+	if _, err := legacyDecrypt(wrong, ct); err == nil {
 		t.Error("ожидалась ошибка на неверном ключе")
 	}
-	if _, err := decrypt(key, []byte("garbage")); err == nil {
+	if _, err := legacyDecrypt(key, []byte("garbage")); err == nil {
 		t.Error("ожидалась ошибка на мусорных данных")
 	}
 }
@@ -160,7 +159,7 @@ func TestPutEncCarriesEncoding(t *testing.T) {
 
 	// undo возвращает бинарную версию вместе с её enc
 	back, ok := m["K"].Undo()
-	if !ok || back.Enc != EncB64 || back.Value != "AAEC" {
+	if !ok || back.Enc != EncB64 || txt(back.Val) != "AAEC" {
 		t.Fatalf("undo должен вернуть бинарную версию с enc: %+v", back)
 	}
 	if len(back.RedoStack) != 1 || back.RedoStack[0].Enc != "" {
@@ -169,7 +168,7 @@ func TestPutEncCarriesEncoding(t *testing.T) {
 
 	// redo — обратно к тексту
 	fwd, ok := back.Redo()
-	if !ok || fwd.Enc != "" || fwd.Value != "plain-text" {
+	if !ok || fwd.Enc != "" || txt(fwd.Val) != "plain-text" {
 		t.Fatalf("redo должен вернуть текстовую версию: %+v", fwd)
 	}
 	if len(fwd.History) != 1 || fwd.History[0].Enc != EncB64 {
@@ -192,20 +191,20 @@ func TestPutEncSameValueNoHistory(t *testing.T) {
 }
 
 func TestSecretBytes(t *testing.T) {
-	bin := Secret{Value: "AAECAw==", Enc: EncB64}
+	bin := Secret{Val: Text("AAECAw=="), Enc: EncB64}
 	raw, err := bin.Bytes()
 	if err != nil || !bytes.Equal(raw, []byte{0, 1, 2, 3}) {
 		t.Errorf("Bytes() бинарного: %v %v", raw, err)
 	}
-	txt := Secret{Value: "hello"}
-	raw, err = txt.Bytes()
+	plain := Secret{Val: Text("hello")}
+	raw, err = plain.Bytes()
 	if err != nil || string(raw) != "hello" {
 		t.Errorf("Bytes() текста: %v %v", raw, err)
 	}
-	if !bin.IsBinary() || txt.IsBinary() {
+	if !bin.IsBinary() || plain.IsBinary() {
 		t.Error("IsBinary: бинарный → true, текст → false")
 	}
-	if _, err := (Secret{Value: "не base64!", Enc: EncB64}).Bytes(); err == nil {
+	if _, err := (Secret{Val: Text("не base64!"), Enc: EncB64}).Bytes(); err == nil {
 		t.Error("битый base64 должен вернуть ошибку")
 	}
 }
@@ -215,7 +214,7 @@ func TestForgetKeepsEnc(t *testing.T) {
 	PutEnc(m, "K", "AAEC", EncB64)
 	Put(m, "K", "text")
 	got := m["K"].Forget()
-	if got.Enc != "" || got.Value != "text" || len(got.History) != 0 {
+	if got.Enc != "" || txt(got.Val) != "text" || len(got.History) != 0 {
 		t.Errorf("forget: %+v", got)
 	}
 	PutEnc(m, "B", "AAEC", EncB64)
@@ -225,51 +224,42 @@ func TestForgetKeepsEnc(t *testing.T) {
 }
 
 // Open обязан отказаться открывать стор более новой версии схемы: бинарь,
-// не знающий свежих полей (например enc), молча уничтожил бы их при Save.
+// не знающий свежих полей (например enc), молча уничтожил бы их при записи.
 func TestOpenRejectsNewerVersion(t *testing.T) {
-	t.Setenv("SEC_STORE", t.TempDir()+"/store.enc")
-	key := make([]byte, 32)
-	if _, err := rand.Read(key); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("SEC_KEY", hex.EncodeToString(key))
-
-	pt, err := json.Marshal(&Store{Version: storeVersion + 1, Projects: map[string]map[string]Secret{}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	ct, err := encrypt(key, pt)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(Path(), ct, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	key := testEnv(t)
+	writeLegacy(t, key, &portableStore{Version: storeVersion + 1, Projects: map[string]map[string]portableSecret{}})
 	if _, _, _, err := Open(false); err == nil {
 		t.Fatal("ожидался отказ: стор версии storeVersion+1")
 	}
 }
 
-// Save всегда штампует текущую версию схемы — стор, прошедший через новый
-// бинарь, помечен так, чтобы будущие несовместимые сборки его распознали.
-func TestSaveStampsCurrentVersion(t *testing.T) {
-	t.Setenv("SEC_STORE", t.TempDir()+"/store.enc")
-	key := make([]byte, 32)
-	if _, err := rand.Read(key); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("SEC_KEY", hex.EncodeToString(key))
-
-	st := &Store{Version: 1, Projects: map[string]map[string]Secret{"p": {"K": {Value: "v"}}}}
-	if err := Save(st, key); err != nil {
-		t.Fatal(err)
-	}
-	got, _, _, err := Open(false)
+// Запись SECSTOR2 всегда штампует текущую версию схемы — стор, прошедший через
+// новый бинарь, помечен так, чтобы будущие несовместимые сборки его распознали.
+func TestCommitStampsCurrentVersion(t *testing.T) {
+	key := testEnv(t)
+	writeLegacy(t, key, &portableStore{Version: 1, Projects: map[string]map[string]portableSecret{"p": {"K": {Value: sp("v")}}}})
+	st, _, _, err := Begin(false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Version != storeVersion {
-		t.Errorf("Version = %d, ожидалась %d", got.Version, storeVersion)
+	Put(st.Project("p"), "K2", "v2")
+	if err := st.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pt, err := legacyDecrypt(key, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ps portableStore
+	if err := json.Unmarshal(pt, &ps); err != nil {
+		t.Fatal(err)
+	}
+	if ps.Version != storeVersion {
+		t.Errorf("Version = %d, ожидалась %d", ps.Version, storeVersion)
 	}
 }
 
@@ -280,10 +270,10 @@ func TestIsFile(t *testing.T) {
 		s    Secret
 		want bool
 	}{
-		{Secret{Value: "v"}, false},
-		{Secret{Value: "v", Meta: &Meta{Kind: "password"}}, false},
-		{Secret{Value: "v", Meta: &Meta{Kind: "file"}}, true},
-		{Secret{Value: "QUFBQQ==", Enc: EncB64}, true},
+		{Secret{Val: Text("v")}, false},
+		{Secret{Val: Text("v"), Meta: &Meta{Kind: "password"}}, false},
+		{Secret{Val: Text("v"), Meta: &Meta{Kind: "file"}}, true},
+		{Secret{Val: Text("QUFBQQ=="), Enc: EncB64}, true},
 	}
 	for i, c := range cases {
 		if got := c.s.IsFile(); got != c.want {

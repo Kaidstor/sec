@@ -18,9 +18,10 @@ import (
 	"strings"
 )
 
-// OSWrite записывает hex-ключ в системное хранилище ОС (обёртка над
-// build-tagged osKeyringWrite). Нужна ротации ключа (rekey) в слое command.
-func OSWrite(hexKey string) error { return osKeyringWrite(hexKey) }
+const (
+	accountMaster  = "master"
+	accountPending = "master-next" // новый ключ на время rekey (см. pending.go)
+)
 
 // OSName — человекочитаемое имя системного бэкенда (Keychain/libsecret/…),
 // для показа в `sec info`.
@@ -69,7 +70,7 @@ func Load(create bool) ([]byte, string, error) {
 		return k, "env", err
 	}
 	if osKeyringAvailable() {
-		if out, err := osKeyringRead(); err == nil && strings.TrimSpace(out) != "" {
+		if out, err := osKeyringRead(accountMaster); err == nil && strings.TrimSpace(out) != "" {
 			k, derr := decodeKey(out, "системное хранилище")
 			return k, "keyring", derr
 		}
@@ -88,8 +89,8 @@ func Load(create bool) ([]byte, string, error) {
 	}
 	hexKey := hex.EncodeToString(k)
 	if osKeyringAvailable() {
-		if err := osKeyringWrite(hexKey); err == nil {
-			if out, rerr := osKeyringRead(); rerr == nil && strings.TrimSpace(out) == hexKey {
+		if err := osKeyringWrite(accountMaster, hexKey); err == nil {
+			if out, rerr := osKeyringRead(accountMaster); rerr == nil && strings.TrimSpace(out) == hexKey {
 				fmt.Fprintf(os.Stderr, "sec: мастер-ключ создан в системном хранилище (%s)\n", osKeyringName())
 				return k, "keyring", nil
 			}

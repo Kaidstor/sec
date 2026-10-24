@@ -14,6 +14,7 @@ import (
 
 	"bufio"
 	"bytes"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"os"
@@ -54,11 +55,12 @@ type scanSkips struct{ short, config int }
 func collectStoreValues(st *store.Store, sc storeScope) (map[string][]string, scanSkips) {
 	values := map[string][]string{}
 	var skips scanSkips
-	add := func(val, ref string) {
-		if len([]rune(val)) < sc.minLen {
+	add := func(v store.Value, ref string) {
+		if v.Chars() < sc.minLen { // короткие отсеиваются по каталогу, без расшифровки
 			skips.short++
 			return
 		}
+		val := mustText(v)
 		values[val] = append(values[val], ref)
 	}
 	for _, p := range store.SortedKeys(st.Projects) {
@@ -72,10 +74,10 @@ func collectStoreValues(st *store.Store, sc storeScope) (map[string][]string, sc
 				continue
 			}
 			ref := p + "/" + k
-			add(sec.Value, ref)
+			add(sec.Val, ref)
 			if sc.withHistory {
 				for _, v := range sec.History {
-					add(v.Value, ref+"~prev")
+					add(v.Val, ref+"~prev")
 				}
 			}
 		}
@@ -99,11 +101,11 @@ func reportScanSkips(skips scanSkips, minLen int) {
 func collectBinaryValues(st *store.Store, sc storeScope) map[string][]string {
 	bins := map[string][]string{}
 	add := func(v store.Version, ref string) {
-		if v.Enc != store.EncB64 {
+		if v.Enc != store.EncB64 || v.Val.DecodedLen() < sc.minLen {
 			return
 		}
-		raw, err := (store.Secret{Value: v.Value, Enc: v.Enc}).Bytes()
-		if err != nil || len(raw) < sc.minLen {
+		raw, err := base64.StdEncoding.DecodeString(mustText(v.Val))
+		if err != nil {
 			return
 		}
 		bins[string(raw)] = append(bins[string(raw)], ref)
@@ -118,7 +120,7 @@ func collectBinaryValues(st *store.Store, sc storeScope) map[string][]string {
 				continue
 			}
 			ref := p + "/" + k
-			add(store.Version{Value: sec.Value, Enc: sec.Enc}, ref)
+			add(store.Version{Val: sec.Val, Enc: sec.Enc}, ref)
 			if sc.withHistory {
 				for _, v := range sec.History {
 					add(v, ref+"~prev")
@@ -150,6 +152,7 @@ func scanCommand(args []string) int {
 	scope := storeScope{minLen: minLen, withHistory: withHistory, includeConfig: includeConfig}
 	values, skips := collectStoreValues(st, scope)
 	bins := collectBinaryValues(st, scope)
+	st.Close() // дальше обход файлов, git и stdin — снимок стора не держим
 	if len(values) == 0 && len(bins) == 0 {
 		warnf("нет значений для поиска (все короче --min либо стор пуст)")
 		emit(map[string]any{"leaks": []scanLeak{}})
@@ -171,7 +174,6 @@ func scanCommand(args []string) int {
 	case len(paths) == 0:
 		die("укажи пути, - для stdin или --staged")
 	default:
-		self := store.Path()
 		for _, root := range paths {
 			filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 				if err != nil {
@@ -184,7 +186,7 @@ func scanCommand(args []string) int {
 					}
 					return nil
 				}
-				if path == self || strings.HasPrefix(filepath.Base(path), "audit.jsonl") {
+				if store.IsOwnFile(path) || strings.HasPrefix(filepath.Base(path), "audit.jsonl") {
 					return nil
 				}
 				leaks = append(leaks, scanFile(path, values, bins)...)

@@ -17,9 +17,9 @@ func hasCand(cands []string, want string) bool {
 
 func completionTestStore() *store.Store {
 	return &store.Store{Version: 1, Projects: map[string]map[string]store.Secret{
-		"whois":               {"API_TOKEN": {Value: "x"}, "DB_URL": {Value: "y"}},
-		"some-bot@commercial": {"BOT_TOKEN": {Value: "z"}},
-		"some-bot@max":        {"BOT_TOKEN": {Value: "w"}, "COMPANY_ID": {Value: "c"}},
+		"whois":               {"API_TOKEN": {Val: store.Text("x")}, "DB_URL": {Val: store.Text("y")}},
+		"some-bot@commercial": {"BOT_TOKEN": {Val: store.Text("z")}},
+		"some-bot@max":        {"BOT_TOKEN": {Val: store.Text("w")}, "COMPANY_ID": {Val: store.Text("c")}},
 	}}
 }
 

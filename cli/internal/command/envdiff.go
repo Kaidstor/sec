@@ -49,7 +49,7 @@ func compareEnvFile(keys map[string]store.Secret, fileKV map[string]string, mkey
 		e := envEntry{key: k, config: inStore && sec.IsConfig()}
 		switch {
 		case inStore && inFile:
-			if hmac.Equal([]byte(store.Fingerprint(mkey, sec.Value)), []byte(store.Fingerprint(mkey, fv))) {
+			if hmac.Equal([]byte(sec.Val.Fingerprint(mkey)), []byte(store.Fingerprint(mkey, fv))) {
 				e.status = envSame
 			} else {
 				e.status = envDiffer
@@ -60,7 +60,7 @@ func compareEnvFile(keys map[string]store.Secret, fileKV map[string]string, mkey
 			e.status = envExtra
 		}
 		if e.config {
-			e.storeVal, e.fileVal = sec.Value, fv
+			e.storeVal, e.fileVal = mustText(sec.Val), fv
 		}
 		out = append(out, e)
 	}

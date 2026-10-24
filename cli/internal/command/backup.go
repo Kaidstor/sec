@@ -1,10 +1,10 @@
 package command
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/kaidstor/sec/internal/audit"
 	"github.com/kaidstor/sec/internal/backup"
@@ -53,13 +53,15 @@ func backupCommand(args []string) int {
 	if err != nil {
 		dieStore(err)
 	}
+	// все значения из одного снимка; потерянный payload — отказ, а не неполный бэкап
+	pt, err := store.MarshalPortable(st)
+	if err != nil {
+		dieK(kindStore, "бэкап не записан: %v", err)
+	}
+	st.Close() // ввод passphrase может длиться сколько угодно
 	pass, err := readPassphrase(true)
 	if err != nil {
 		die("%v", err)
-	}
-	pt, err := json.Marshal(st)
-	if err != nil {
-		dieK(kindStore, "%v", err)
 	}
 	blob, err := backup.Seal(pt, pass)
 	if err != nil {
@@ -102,22 +104,19 @@ func restoreCommand(args []string) int {
 	if err != nil {
 		dieK(kindAuth, "%v", err)
 	}
-	var bak store.Store
-	if err := json.Unmarshal(pt, &bak); err != nil {
-		dieK(kindIO, "бэкап повреждён: %v", err)
-	}
-	if bak.Projects == nil {
-		bak.Projects = map[string]map[string]store.Secret{}
+	bak, err := store.ParsePortable(pt)
+	if err != nil {
+		dieK(kindIO, "бэкап %s: %v", file, err)
 	}
 
-	unlock := store.Lock()
-	defer unlock()
-	st, mkey, _, err := store.Open(true)
+	st, _, _, err := store.Begin(true)
 	if err != nil {
 		dieStore(err)
 	}
+	defer st.Close()
 	mode := "merge"
 	added, updated := 0, 0
+	var skipped []string
 	if replace {
 		mode = "replace"
 		st.Projects = bak.Projects
@@ -127,17 +126,27 @@ func restoreCommand(args []string) int {
 		}
 	} else {
 		// merge: значения из бэкапа побеждают, локальные уходят в историю
-		added, updated = store.Merge(st, &bak)
+		added, updated, skipped = store.Merge(st, bak)
 	}
-	if err := store.Save(st, mkey); err != nil {
+	if err := st.Commit(); err != nil {
 		dieK(kindStore, "запись хранилища: %v", err)
 	}
 	audit.Record("restore", "*", fmt.Sprintf("из %s (%s)", file, mode))
+	warnMergeSkipped(skipped)
 	if replace {
 		fmt.Fprintf(stdout, "хранилище заменено из %s (%d ключей)\n", file, added)
 	} else {
 		fmt.Fprintf(stdout, "восстановлено из %s: новых %d, обновлено %d (старые значения в истории)\n", file, added, updated)
 	}
-	emit(map[string]any{"file": file, "mode": mode, "added": added, "updated": updated})
+	emit(map[string]any{"file": file, "mode": mode, "added": added, "updated": updated, "skipped": emptyIfNil(skipped)})
 	return 0
+}
+
+// warnMergeSkipped — входящие ссылки, не применённые поверх локальных
+// собственных значений (см. store.Merge).
+func warnMergeSkipped(skipped []string) {
+	if len(skipped) > 0 {
+		warnf("не применены входящие ссылки поверх собственных значений: %s (оставлены локальные; связать: sec link … --force)",
+			strings.Join(skipped, ", "))
+	}
 }

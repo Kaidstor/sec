@@ -41,6 +41,29 @@ func writeFile0600(path string, data []byte) error {
 	return f.Close()
 }
 
+// mustText — открытый текст значения; недоступный payload — отказ команды,
+// а не пустая строка.
+func mustText(v store.Value) string {
+	t, err := v.Load()
+	if err != nil {
+		dieStore(err)
+	}
+	return t
+}
+
+// loadedKeys расшифровывает текущие значения набора: такие секреты
+// переживают Close снимка перед сетью и дочерними процессами.
+func loadedKeys(keys map[string]store.Secret) map[string]store.Secret {
+	for k, s := range keys {
+		l, err := s.Loaded()
+		if err != nil {
+			dieK(kindStore, "%s: %v", k, err)
+		}
+		keys[k] = l
+	}
+	return keys
+}
+
 // storedFileMode — права исходного файла из метаданных (set --from-file).
 // Только perm-биты: setuid/setgid/sticky из чужого стора (sync/restore) не тащим.
 func storedFileMode(sec store.Secret) (os.FileMode, bool) {
@@ -65,16 +88,6 @@ func safeBaseName(name string) string {
 		return ""
 	}
 	return name
-}
-
-// decodedB64Len — размер исходных байт по base64-строке, без декодирования
-// (для показа честного размера бинарного секрета вместо длины base64-текста).
-func decodedB64Len(s string) int {
-	pad := 0
-	for i := len(s) - 1; i >= 0 && s[i] == '='; i-- {
-		pad++
-	}
-	return len(s)/4*3 - pad
 }
 
 // fmtTime показывает RFC3339-таймстемп в человекочитаемом локальном виде.

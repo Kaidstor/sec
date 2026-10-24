@@ -39,7 +39,7 @@ func lookupRef(st *store.Store, defService, profile, ref string) (string, error)
 	if sec.IsBinary() {
 		return "", fmt.Errorf("%s/%s — бинарный (файловый) секрет, в текстовый шаблон не подставляется (sec get --out)", proj, key)
 	}
-	return sec.Value, nil
+	return sec.Val.Load()
 }
 
 func renderCommand(args []string) int {
@@ -79,6 +79,7 @@ func renderCommand(args []string) int {
 	if err := t.Execute(&buf, nil); err != nil {
 		die("рендер: %v", err)
 	}
+	st.Close() // запись может уйти по ssh — снимок стора не держим
 	if err := writeSecretFile(file, buf.Bytes()); err != nil {
 		dieK(kindIO, "запись %s: %v", file, err)
 	}

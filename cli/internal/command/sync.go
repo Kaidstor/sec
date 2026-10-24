@@ -16,7 +16,6 @@ import (
 	"github.com/kaidstor/sec/internal/backup"
 	"github.com/kaidstor/sec/internal/store"
 
-	"encoding/json"
 	"fmt"
 	"os"
 )
@@ -41,37 +40,43 @@ func syncCommand(args []string) int {
 		die("%v", err)
 	}
 
-	unlock := store.Lock()
-	defer unlock()
-	st, mkey, _, err := store.Open(true)
-	if err != nil {
-		dieStore(err)
-	}
-
-	added, updated := 0, 0
-	if !fresh {
+	var remote *store.Store
+	if !fresh { // Argon2 и разбор — до блокировки записи
 		pt, err := backup.Open(blob, pass)
 		if err != nil {
 			dieK(kindAuth, "%v", err)
 		}
-		var remote store.Store
-		if err := json.Unmarshal(pt, &remote); err != nil {
-			dieK(kindIO, "блоб повреждён: %v", err)
-		}
-		if remote.Projects == nil {
-			remote.Projects = map[string]map[string]store.Secret{}
-		}
-		added, updated = store.Merge(st, &remote)
-		if err := store.Save(st, mkey); err != nil {
-			dieK(kindStore, "запись локального хранилища: %v", err)
+		if remote, err = store.ParsePortable(pt); err != nil {
+			dieK(kindIO, "блоб %s: %v", file, err)
 		}
 	}
 
-	// push: сводный локальный стор обратно в блоб (атомарно)
-	pt, err := json.Marshal(st)
+	st, _, _, err := store.Begin(true)
 	if err != nil {
-		dieK(kindStore, "%v", err)
+		dieStore(err)
 	}
+	defer st.Close()
+
+	added, updated := 0, 0
+	var skipped []string
+	if remote != nil {
+		added, updated, skipped = store.Merge(st, remote)
+	}
+
+	// сводный стор целиком — до коммита, пока все payload читаются из этого же снимка
+	pt, err := store.MarshalPortable(st)
+	if err != nil {
+		dieK(kindStore, "сводный стор не собран: %v", err)
+	}
+	if !fresh {
+		if err := st.Commit(); err != nil {
+			dieK(kindStore, "запись локального хранилища: %v", err)
+		}
+	}
+	st.Close()
+	warnMergeSkipped(skipped)
+
+	// push: сводный локальный стор обратно в блоб (атомарно)
 	sealed, err := backup.Seal(pt, pass)
 	if err != nil {
 		dieK(kindStore, "%v", err)
@@ -90,6 +95,6 @@ func syncCommand(args []string) int {
 	} else {
 		fmt.Fprintf(stdout, "синхронизировано с %s: подтянуто новых %d, обновлено %d, отправлен сводный стор\n", file, added, updated)
 	}
-	emit(map[string]any{"file": file, "created": fresh, "added": added, "updated": updated})
+	emit(map[string]any{"file": file, "created": fresh, "added": added, "updated": updated, "skipped": emptyIfNil(skipped)})
 	return 0
 }

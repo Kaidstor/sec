@@ -6,7 +6,8 @@ history, or in an agent's chat transcript. Input is hidden / from stdin /
 from the clipboard; consumption is env injection (`run`) or writing to a
 file (`export`).
 
-The store is a single file encrypted whole with XChaCha20-Poly1305; the
+The store is a local SQLite database whose catalog and every value are
+encrypted separately with XChaCha20-Poly1305 before they reach the database; the
 master key lives separately (macOS Keychain / Secret Service on Linux /
 Credential Manager on Windows / env / file), and portable backups are
 passphrase-protected via Argon2id (details in
@@ -177,7 +178,7 @@ cryptography.
 
 | What | Algorithm | Parameters |
 | --- | --- | --- |
-| Store file | **XChaCha20-Poly1305** (AEAD) | 256-bit key, 192-bit nonce (random per write), 128-bit tag |
+| Store catalog and values | **XChaCha20-Poly1305** (AEAD) | 256-bit key, 192-bit nonce (random per blob), 128-bit tag |
 | Master key | `crypto/rand` (OS CSPRNG) | 32 bytes, stored as hex64 |
 | Passphrase backup / sync | **Argon2id** → XChaCha20-Poly1305 | 64 MiB, t=3, p=4, 16-byte salt, 32-byte key |
 | Fingerprints (`fingerprint`, `diff`, `peek`) | **HMAC-SHA-256** under the master key | truncated to 64 bits |
@@ -186,20 +187,56 @@ cryptography.
 
 ### The store
 
-The whole store is one JSON document encrypted in a single AEAD call; on
-disk it is laid out as:
+The store is a local SQLite database (`modernc.org/sqlite`, pure Go, no CGO,
+no server). Encryption happens in sec itself, before anything reaches the
+driver:
 
 ```
-"SECSTOR2" (8 bytes) │ nonce (24 bytes) │ XChaCha20-Poly1305(store JSON)
+sec_meta     store_id — random store UUID (plain)
+sec_catalog  one blob: nonce(24) │ XChaCha20-Poly1305(catalog)
+sec_payload  one row per value version: id (random) │ nonce(24) │ XChaCha20-Poly1305(value)
 ```
 
-The `SECSTOR2` magic goes into the **AAD**, so the header is authenticated —
-it cannot be tampered with without breaking decryption. Nothing sits on disk
-in plain text: not project or key names, not value history, not metadata.
-XChaCha20 was chosen for its 192-bit nonce — a random nonce per write is
-safe regardless of how many writes happen (unlike the 96-bit nonce of
-AES-GCM/ChaCha20-Poly1305). The file is 0600 and writes are atomic
-(tmp + `rename`) under `flock`.
+The catalog holds project and key names, links, inheritance, metadata
+(notes, file names), timestamps, value ids and their summaries (length,
+HMAC). Every value (current, history, redo) is its own blob with its own
+nonce. The AAD binds a blob to the format, the store and its role
+(`SECSTOR3\0catalog\0<store_id>`, `SECSTOR3\0payload\0<store_id>\0<id>`), so values
+cannot be swapped between rows or stores, and a decrypted value is also
+checked against the length and HMAC in the catalog. Value ids are random and
+immutable: a new value is always a new row; unreferenced rows are deleted in
+the same transaction.
+
+Why: `get`, `ls`, `find` and completion read the catalog and at most one
+value, so their cost no longer grows with the size of unrelated file secrets
+(the old format decrypted and parsed the whole store on every call — ~2.5 s
+on a 447 MiB store). `run --only` and skipping file secrets are decided from
+the catalog before any value is decrypted. Reads are a SQLite snapshot;
+writes take `flock` on `store.enc.lock` and `BEGIN IMMEDIATE` before reading
+the catalog — no lost updates, bounded waits (10 s lock, 5 s busy) ending in
+a clear error. WAL with `synchronous=FULL`; the snapshot is closed before
+`exec`, child processes and network calls.
+
+**Visible without the key:** structure — the number of values and each
+one's size, the catalog size, file mtimes. Not visible: names, metadata,
+values, which value belongs to which key. A deleted version is removed
+logically; physical erasure on SSDs, filesystem snapshots and backups is not
+promised.
+
+**Copying the database file by hand** is only safe together with
+`store.enc-wal` and `store.enc-shm` and not during a write. To move a store,
+use `sec backup` / `sync`.
+
+**The old SECSTOR2 format** — the whole JSON in one AEAD blob
+(`"SECSTOR2" │ nonce(24) │ XChaCha20-Poly1305(JSON)`, magic in the AAD) —
+is still read unchanged. `sec migrate` converts it under the same lock old
+binaries take: the database is built alongside, re-read and compared with
+the original model byte for byte, the old file is kept as
+`store.enc.v2-<time>.bak`, and one `rename` puts the database in place — a
+crash at any step leaves either the old store or the complete new one.
+`sec migrate --to-v2` goes back, including everything written after the
+switch. An old sec refuses a SQLite store ("не похоже на хранилище sec") and
+creates nothing. New stores are created as SQLite.
 
 ### The master key
 
@@ -212,14 +249,21 @@ native syscall — it never shows up in `ps`/argv. The key is **not** derived
 from a user password: decryption is non-interactive, which is why `sec run`
 works in scripts without a prompt.
 
-`sec rekey` generates a new key and re-encrypts the store; the
-rollback-safe order (key backend first, then the store) is described in
+`sec rekey` generates a new key and re-encrypts the store. The key backend
+and the store cannot be written in one transaction, so the new key first goes
+to a separate slot (Keychain `master-next`, file `key.next`, for `SEC_KEY` the
+file `store.enc.rekey-key`), then the store is re-encrypted in one commit,
+then the key becomes primary and the slot is cleared. A crash in between
+leaves the store readable: sec tries the slot key when the primary one does
+not fit, and the next write finishes the rotation. Details:
 [`cli/README.md`](cli/README.md#ротация-мастер-ключа).
 
 ### Backup, restore, and sync
 
-`backup` / `restore` / `sync` produce a portable blob independent of the
-master key: its key is derived from a passphrase via **Argon2id**
+`backup` / `restore` / `sync` produce a portable blob — the complete,
+self-contained JSON of the previous schema (version 2) with every value and
+no references to local database rows; a missing value is a refusal, never a
+partial backup. The blob is independent of the master key: its key is derived from a passphrase via **Argon2id**
 (memory-hard, resistant to GPU/ASIC brute force).
 
 ```

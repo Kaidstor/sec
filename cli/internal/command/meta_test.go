@@ -53,12 +53,12 @@ func TestResolveExpiresAt(t *testing.T) {
 
 func TestDueAt(t *testing.T) {
 	// нет метаданных — политики нет
-	if _, _, ok := dueAt(store.Secret{Value: "x"}); ok {
+	if _, _, ok := dueAt(store.Secret{Val: store.Text("x")}); ok {
 		t.Error("без Meta не должно быть срока")
 	}
 	// rotate-every считается от UpdatedAt
 	base := time.Now().Add(-100 * 24 * time.Hour)
-	s := store.Secret{Value: "x", UpdatedAt: base.Format(time.RFC3339), Meta: &store.Meta{RotateEvery: "90d"}}
+	s := store.Secret{Val: store.Text("x"), UpdatedAt: base.Format(time.RFC3339), Meta: &store.Meta{RotateEvery: "90d"}}
 	due, src, ok := dueAt(s)
 	if !ok || src != "rotate-every" {
 		t.Fatalf("ожидался rotate-every, got ok=%v src=%q", ok, src)

@@ -45,9 +45,9 @@ func TestStoreProjProfile(t *testing.T) {
 // "svc@" — голый "svc" в папке с default из .sec разрешился бы в профиль.
 func TestDisplayProj(t *testing.T) {
 	st := &Store{Projects: map[string]map[string]Secret{
-		"svc":      {"K": {Value: "v"}},
-		"svc@prod": {"K": {Value: "v"}},
-		"plain":    {"K": {Value: "v"}},
+		"svc":      {"K": {Val: Text("v")}},
+		"svc@prod": {"K": {Val: Text("v")}},
+		"plain":    {"K": {Val: Text("v")}},
 	}}
 	if got := st.DisplayProj("svc"); got != "svc@" {
 		t.Errorf("база с профилями: DisplayProj(svc) = %q, ожидалось svc@", got)
@@ -65,16 +65,16 @@ func TestDisplayProj(t *testing.T) {
 
 func TestMergeStores(t *testing.T) {
 	dst := &Store{Version: 1, Projects: map[string]map[string]Secret{
-		"app": {"A": {Value: "local-a"}, "B": {Value: "same"}},
+		"app": {"A": {Val: Text("local-a")}, "B": {Val: Text("same")}},
 	}}
 	src := &Store{Version: 1, Projects: map[string]map[string]Secret{
-		"app": {"A": {Value: "remote-a"}, "B": {Value: "same"}, "C": {Value: "new-c", Meta: &Meta{Note: "из src"}}},
+		"app": {"A": {Val: Text("remote-a")}, "B": {Val: Text("same")}, "C": {Val: Text("new-c"), Meta: &Meta{Note: "из src"}}},
 	}}
-	added, updated := Merge(dst, src)
-	if dst.Projects["app"]["A"].Value != "remote-a" {
+	added, updated, _ := Merge(dst, src)
+	if txt(dst.Projects["app"]["A"].Val) != "remote-a" {
 		t.Error("значение из src должно победить")
 	}
-	if len(dst.Projects["app"]["A"].History) == 0 || dst.Projects["app"]["A"].History[0].Value != "local-a" {
+	if len(dst.Projects["app"]["A"].History) == 0 || txt(dst.Projects["app"]["A"].History[0].Val) != "local-a" {
 		t.Error("вытесненное локальное значение должно уйти в историю")
 	}
 	if dst.Projects["app"]["C"].Meta == nil || dst.Projects["app"]["C"].Meta.Note != "из src" {

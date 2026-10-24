@@ -42,6 +42,7 @@ func setCommand(args []string) int {
 	// ссылку/наследование не редактируем — предупреждаем до ввода, чтобы не тратить набор впустую
 	if st0, _, _, err := store.Open(false); err == nil {
 		mustEditable(st0, proj, key, override)
+		st0.Close() // ввод значения может длиться сколько угодно
 	}
 
 	var val, enc, fileName, fileMode string
@@ -128,12 +129,11 @@ func setCommand(args []string) int {
 		die("пустое значение, ничего не сохранено")
 	}
 
-	unlock := store.Lock()
-	defer unlock()
-	st, mkey, _, err := store.Open(true)
+	st, mkey, _, err := store.Begin(true)
 	if err != nil {
 		dieStore(err)
 	}
+	defer st.Close()
 	mustEditable(st, proj, key, override) // авторитетная проверка под блокировкой
 	keys := st.Project(proj)
 	if override { // перебиваем ссылку — сносим её начисто, без пустой истории
@@ -148,7 +148,7 @@ func setCommand(args []string) int {
 	} else {
 		clearFileMeta(keys, key) // текст поверх файлового секрета — прежнее имя файла больше не о нём
 	}
-	if err := store.Save(st, mkey); err != nil {
+	if err := st.Commit(); err != nil {
 		dieK(kindStore, "запись хранилища: %v", err)
 	}
 	audit.Record("set", proj+"/"+key, src)
@@ -159,7 +159,7 @@ func setCommand(args []string) int {
 	size := fmt.Sprintf("%d символов", len(val))
 	out := map[string]any{"ref": proj + "/" + key, "updated": existed, "chars": len(val)}
 	if enc == store.EncB64 {
-		raw, _ := (store.Secret{Value: val, Enc: enc}).Bytes()
+		raw, _ := (store.Secret{Val: store.Text(val), Enc: enc}).Bytes()
 		size = fmt.Sprintf("бинарный файл, %d байт → base64", len(raw))
 		delete(out, "chars")
 		out["binary"], out["bytes"] = true, len(raw)
@@ -260,12 +260,11 @@ func genCommand(args []string) int {
 		val[i] = charset[n.Int64()]
 	}
 
-	unlock := store.Lock()
-	defer unlock()
-	st, mkey, _, err := store.Open(true)
+	st, mkey, _, err := store.Begin(true)
 	if err != nil {
 		dieStore(err)
 	}
+	defer st.Close()
 	mustEditable(st, proj, key, override)
 	keys := st.Project(proj)
 	if override {
@@ -276,7 +275,7 @@ func genCommand(args []string) int {
 	existed := store.Put(keys, key, string(val))
 	applyMetaFlags(keys, key, note, kind)
 	clearFileMeta(keys, key) // gen поверх файлового секрета — имя файла больше не о нём
-	if err := store.Save(st, mkey); err != nil {
+	if err := st.Commit(); err != nil {
 		dieK(kindStore, "запись хранилища: %v", err)
 	}
 	audit.Record("gen", proj+"/"+key, fmt.Sprintf("len=%d", length))
@@ -295,6 +294,8 @@ func genCommand(args []string) int {
 	emit(map[string]any{"ref": proj + "/" + key, "updated": existed, "chars": length, "clipboard": clip})
 	return 0
 }
+
+var getClipboardWrite = clipboardWrite
 
 func getCommand(args []string) int {
 	ref, rest := splitArgs(args)
@@ -315,10 +316,24 @@ func getCommand(args []string) int {
 	_ = fs.Parse(rest)
 	proj, key := resolveKeyRef(ref, fs, "sec get <proj>/<KEY>")
 
-	st, mkey, _, err := store.Open(false)
+	// --once читает значение и удаляет ключ одной транзакцией записи: между
+	// показом и удалением никто не успеет записать в ключ новое значение
+	var st *store.Store
+	var mkey []byte
+	var err error
+	if once {
+		if !clip && stdoutDiscarded() {
+			dieK(kindIO, "stdout закрыт или ведёт в /dev/null — --once удалил бы ключ, не показав значение; ключ не тронут")
+		}
+		catchSIGPIPE()
+		st, mkey, _, err = store.Begin(false)
+	} else {
+		st, mkey, _, err = store.Open(false)
+	}
 	if err != nil {
 		dieStore(err)
 	}
+	defer st.Close()
 	sec, org, source, ok := st.Lookup(proj, key)
 	if !ok {
 		if org == store.OriginRef {
@@ -326,23 +341,25 @@ func getCommand(args []string) int {
 		}
 		dieNotFound("нет %s/%s (смотри: sec ls %s)", proj, key, proj)
 	}
-	val, enc := sec.Value, sec.Enc
+	ver := store.Version{Val: sec.Val, Enc: sec.Enc, UpdatedAt: sec.UpdatedAt}
 	detail := "показано"
 	if prevN > 0 {
 		if prevN > len(sec.History) {
 			dieK(kindConflict, "у %s/%s в истории только %d значений (sec history %s)", proj, key, len(sec.History), ref)
 		}
-		val, enc = sec.History[prevN-1].Value, sec.History[prevN-1].Enc
+		ver = sec.History[prevN-1]
 		detail = fmt.Sprintf("показано prev=%d", prevN)
 	}
+	enc := ver.Enc
 	if outFile != "" {
 		if once || clip || peek || fp {
 			die("--out несовместим с --once/--clip/--peek/--fingerprint")
 		}
-		raw, berr := (store.Secret{Value: val, Enc: enc}).Bytes()
+		raw, berr := ver.Bytes()
 		if berr != nil {
 			dieK(kindStore, "%s/%s: %v", proj, key, berr)
 		}
+		st.Close()
 		target := outFile
 		if fi, serr := os.Stat(outFile); serr == nil && fi.IsDir() {
 			name := key // в каталог — под исходным именем файла, если оно известно
@@ -376,9 +393,11 @@ func getCommand(args []string) int {
 	}
 	isBin := enc == store.EncB64
 	if fp {
+		fingerprint := ver.Val.Fingerprint(mkey)
+		st.Close()
 		audit.Record("get", proj+"/"+key, "отпечаток")
-		fmt.Fprintln(stdout, store.Fingerprint(mkey, val))
-		emit(getData(proj, key, prevN, map[string]any{"fingerprint": store.Fingerprint(mkey, val)}))
+		fmt.Fprintln(stdout, fingerprint)
+		emit(getData(proj, key, prevN, map[string]any{"fingerprint": fingerprint}))
 		return 0
 	}
 	if once {
@@ -393,38 +412,39 @@ func getCommand(args []string) int {
 		if org != store.OriginOwn {
 			dieK(kindConflict, "%s/%s не собственное значение (%s) — --once уничтожил бы ссылку, а значение осталось бы в родителе", proj, key, source)
 		}
-		unlock := store.Lock()
-		defer unlock()
-		st2, mkey2, _, err := store.Open(false)
-		if err != nil {
-			dieStore(err)
-		}
-		if _, ok := st2.Projects[proj][key]; !ok {
-			dieNotFound("нет %s/%s", proj, key)
-		}
-		if refs := st2.Referrers(proj + "/" + key); len(refs) > 0 {
+	}
+	val := mustText(ver.Val)
+	if once {
+		if refs := st.Referrers(proj + "/" + key); len(refs) > 0 {
 			warnf("ВНИМАНИЕ: на %s/%s ссылаются %s — после --once удаления ссылки станут битыми", proj, key, strings.Join(refs, ", "))
 		}
 		// буфер — до удаления: если он недоступен, ключ остаётся в сторе,
 		// иначе значение потерялось бы безвозвратно
 		if clip {
-			if err := clipboardWrite(val); err != nil {
+			if err := getClipboardWrite(val); err != nil {
 				dieK(kindIO, "буфер обмена: %v (ключ не удалён)", err)
 			}
 		}
-		delete(st2.Projects[proj], key)
-		st2.Prune(proj)
-		if err := store.Save(st2, mkey2); err != nil {
+		delete(st.Projects[proj], key)
+		st.Prune(proj)
+		if err := st.Commit(); err != nil {
 			dieK(kindStore, "запись хранилища: %v", err)
 		}
+		committed = fmt.Sprintf(" — %s/%s уже удалён из стора", proj, key)
 		out := map[string]any{"deleted": true}
 		if clip {
 			audit.Record("get", proj+"/"+key, "once (в буфер и удалено)")
-			fmt.Fprintln(stdout, "скопировано в буфер обмена (значение не показано)")
+			committed += ", значение скопировано в буфер обмена"
+			if _, err := fmt.Fprintln(checkedWriter{stdout}, "скопировано в буфер обмена (значение не показано)"); err != nil {
+				return fail(2, kindIO, "вывод результата: %v%s", err, committed)
+			}
 			out["clipboard"] = true
 		} else {
 			audit.Record("get", proj+"/"+key, "once (показано и удалено)")
-			fmt.Fprintln(stdout, val)
+			committed += ", значение не доставлено"
+			if _, err := fmt.Fprintln(checkedWriter{stdout}, val); err != nil {
+				return fail(2, kindIO, "вывод значения: %v%s", err, committed)
+			}
 			out["value"] = val
 		}
 		if !jsonMode { // в JSON это поле deleted
@@ -433,10 +453,12 @@ func getCommand(args []string) int {
 		emit(getData(proj, key, 0, out))
 		return 0
 	}
+	ver.Val = store.Text(val)
+	st.Close()
 	if peek {
 		audit.Record("get", proj+"/"+key, strings.Replace(detail, "показано", "маска", 1))
 		if isBin {
-			raw, _ := (store.Secret{Value: val, Enc: enc}).Bytes()
+			raw, _ := ver.Bytes()
 			fmt.Fprintf(stdout, "%s (бинарный файл, %d байт — sec get %s --out <файл>)\n", store.MaskValue(val), len(raw), ref)
 			emit(getData(proj, key, prevN, map[string]any{"mask": store.MaskValue(val), "binary": true, "bytes": len(raw)}))
 			return 0
@@ -449,7 +471,7 @@ func getCommand(args []string) int {
 		if isBin {
 			die("%s/%s — бинарный (файловый) секрет, в буфер обмена не копируется: sec get %s --out <файл>", proj, key, ref)
 		}
-		if err := clipboardWrite(val); err != nil {
+		if err := getClipboardWrite(val); err != nil {
 			dieK(kindIO, "буфер обмена: %v", err)
 		}
 		msg := "скопировано в буфер обмена (значение не показано)"
@@ -479,7 +501,9 @@ func getCommand(args []string) int {
 		die("%s/%s — бинарный (файловый) секрет, сырые байты в терминал не печатаются: sec get %s --out <файл>", proj, key, ref)
 	}
 	audit.Record("get", proj+"/"+key, detail)
-	fmt.Fprintln(stdout, val)
+	if _, err := fmt.Fprintln(stdout, val); err != nil {
+		return fail(2, kindIO, "вывод значения: %v", err)
+	}
 	emit(getData(proj, key, prevN, map[string]any{"value": val}))
 	return 0
 }
@@ -523,11 +547,11 @@ func historyCommand(args []string) int {
 		out := []verOut{}
 		for i := len(sec.RedoStack) - 1; i >= 0; i-- {
 			v := sec.RedoStack[i]
-			out = append(out, verOut{i + 1, store.Fingerprint(mkey, v.Value), len([]rune(v.Value)), v.UpdatedAt})
+			out = append(out, verOut{i + 1, v.Val.Fingerprint(mkey), v.Val.Chars(), v.UpdatedAt})
 		}
-		out = append(out, verOut{0, store.Fingerprint(mkey, sec.Value), len([]rune(sec.Value)), sec.UpdatedAt})
+		out = append(out, verOut{0, sec.Val.Fingerprint(mkey), sec.Val.Chars(), sec.UpdatedAt})
 		for i, v := range sec.History {
-			out = append(out, verOut{-(i + 1), store.Fingerprint(mkey, v.Value), len([]rune(v.Value)), v.UpdatedAt})
+			out = append(out, verOut{-(i + 1), v.Val.Fingerprint(mkey), v.Val.Chars(), v.UpdatedAt})
 		}
 		emit(out)
 		return 0
@@ -537,11 +561,11 @@ func historyCommand(args []string) int {
 	for i := len(sec.RedoStack) - 1; i >= 0; i-- {
 		v := sec.RedoStack[i]
 		fmt.Fprintf(stdout, "  %+3d  %-8s %4d симв.  %s  (отменено, sec redo вернёт)\n",
-			i+1, store.MaskValue(v.Value), len([]rune(v.Value)), fmtTime(v.UpdatedAt))
+			i+1, store.MaskValue(mustText(v.Val)), v.Val.Chars(), fmtTime(v.UpdatedAt))
 	}
-	fmt.Fprintf(stdout, "  тек  %-8s %4d симв.  %s\n", store.MaskValue(sec.Value), len([]rune(sec.Value)), fmtTime(sec.UpdatedAt))
+	fmt.Fprintf(stdout, "  тек  %-8s %4d симв.  %s\n", store.MaskValue(mustText(sec.Val)), sec.Val.Chars(), fmtTime(sec.UpdatedAt))
 	for i, v := range sec.History {
-		fmt.Fprintf(stdout, "  %3d  %-8s %4d симв.  %s\n", -(i + 1), store.MaskValue(v.Value), len([]rune(v.Value)), fmtTime(v.UpdatedAt))
+		fmt.Fprintf(stdout, "  %3d  %-8s %4d симв.  %s\n", -(i + 1), store.MaskValue(mustText(v.Val)), v.Val.Chars(), fmtTime(v.UpdatedAt))
 	}
 	return 0
 }
@@ -554,25 +578,24 @@ func undoCommand(args []string) int {
 	fs := newFlagSet("undo")
 	_ = fs.Parse(rest)
 	proj, key := resolveKeyRef(ref, fs, "sec undo <proj>/<KEY>")
-	unlock := store.Lock()
-	defer unlock()
-	st, mkey, _, err := store.Open(false)
+	st, _, _, err := store.Begin(false)
 	if err != nil {
 		dieStore(err)
 	}
+	defer st.Close()
 	mustEditable(st, proj, key, false) // у ссылки/наследования своей истории нет — она у родителя
 	next, ok := mustSecret(st, proj, key).Undo()
 	if !ok {
 		dieK(kindConflict, "у %s/%s нет более старых версий (sec history %s)", proj, key, ref)
 	}
 	st.Projects[proj][key] = next
-	if err := store.Save(st, mkey); err != nil {
+	if err := st.Commit(); err != nil {
 		dieK(kindStore, "запись хранилища: %v", err)
 	}
 	audit.Record("undo", proj+"/"+key, "")
 	fmt.Fprintf(stdout, "%s/%s ← версия от %s (%d символов); ещё старше: %d, вернуть вперёд: sec redo\n",
-		proj, key, fmtTime(next.UpdatedAt), len([]rune(next.Value)), len(next.History))
-	emit(map[string]any{"ref": proj + "/" + key, "updatedAt": next.UpdatedAt, "chars": len([]rune(next.Value)),
+		proj, key, fmtTime(next.UpdatedAt), next.Val.Chars(), len(next.History))
+	emit(map[string]any{"ref": proj + "/" + key, "updatedAt": next.UpdatedAt, "chars": next.Val.Chars(),
 		"older": len(next.History), "ahead": len(next.RedoStack)})
 	return 0
 }
@@ -583,25 +606,24 @@ func redoCommand(args []string) int {
 	fs := newFlagSet("redo")
 	_ = fs.Parse(rest)
 	proj, key := resolveKeyRef(ref, fs, "sec redo <proj>/<KEY>")
-	unlock := store.Lock()
-	defer unlock()
-	st, mkey, _, err := store.Open(false)
+	st, _, _, err := store.Begin(false)
 	if err != nil {
 		dieStore(err)
 	}
+	defer st.Close()
 	mustEditable(st, proj, key, false)
 	next, ok := mustSecret(st, proj, key).Redo()
 	if !ok {
 		dieK(kindConflict, "у %s/%s нет отменённых значений впереди (redo нечего возвращать)", proj, key)
 	}
 	st.Projects[proj][key] = next
-	if err := store.Save(st, mkey); err != nil {
+	if err := st.Commit(); err != nil {
 		dieK(kindStore, "запись хранилища: %v", err)
 	}
 	audit.Record("redo", proj+"/"+key, "")
 	fmt.Fprintf(stdout, "%s/%s → версия от %s (%d символов); ещё впереди: %d\n",
-		proj, key, fmtTime(next.UpdatedAt), len([]rune(next.Value)), len(next.RedoStack))
-	emit(map[string]any{"ref": proj + "/" + key, "updatedAt": next.UpdatedAt, "chars": len([]rune(next.Value)),
+		proj, key, fmtTime(next.UpdatedAt), next.Val.Chars(), len(next.RedoStack))
+	emit(map[string]any{"ref": proj + "/" + key, "updatedAt": next.UpdatedAt, "chars": next.Val.Chars(),
 		"older": len(next.History), "ahead": len(next.RedoStack)})
 	return 0
 }
@@ -614,12 +636,11 @@ func forgetCommand(args []string) int {
 	fs := newFlagSet("forget")
 	_ = fs.Parse(rest)
 	proj, key := resolveKeyRef(ref, fs, "sec forget <proj>/<KEY>")
-	unlock := store.Lock()
-	defer unlock()
-	st, mkey, _, err := store.Open(false)
+	st, _, _, err := store.Begin(false)
 	if err != nil {
 		dieStore(err)
 	}
+	defer st.Close()
 	mustEditable(st, proj, key, false)
 	cur := mustSecret(st, proj, key)
 	n := len(cur.History) + len(cur.RedoStack)
@@ -629,7 +650,7 @@ func forgetCommand(args []string) int {
 		return 0
 	}
 	st.Projects[proj][key] = cur.Forget()
-	if err := store.Save(st, mkey); err != nil {
+	if err := st.Commit(); err != nil {
 		dieK(kindStore, "запись хранилища: %v", err)
 	}
 	audit.Record("forget", proj+"/"+key, fmt.Sprintf("удалено версий: %d", n))
@@ -671,12 +692,11 @@ func moveKey(args []string, remove bool) int {
 		die("источник и назначение совпадают")
 	}
 
-	unlock := store.Lock()
-	defer unlock()
-	st, mkey, _, err := store.Open(false)
+	st, _, _, err := store.Begin(false)
 	if err != nil {
 		dieStore(err)
 	}
+	defer st.Close()
 	s := mustSecret(st, sp, sk)
 	if _, busy := st.Projects[dp][dk]; busy && !force {
 		dieK(kindConflict, "%s/%s уже существует — sec %s --force перезапишет", dp, dk, name)
@@ -688,7 +708,7 @@ func moveKey(args []string, remove bool) int {
 		st.Prune(sp)
 		note = "история сохранена, значение не показано"
 	}
-	if err := store.Save(st, mkey); err != nil {
+	if err := st.Commit(); err != nil {
 		dieK(kindStore, "запись хранилища: %v", err)
 	}
 	audit.Record(name, sp+"/"+sk, "→ "+dp+"/"+dk)
@@ -710,12 +730,11 @@ func rmCommand(args []string) int {
 		die("укажи ключ (sec rm <proj>/<KEY>) или проект (sec rm <proj> --all)")
 	}
 
-	unlock := store.Lock()
-	defer unlock()
-	st, mkey, _, err := store.Open(false)
+	st, _, _, err := store.Begin(false)
 	if err != nil {
 		dieStore(err)
 	}
+	defer st.Close()
 	if all {
 		if strings.Contains(ref, "/") {
 			die("--all принимает имя проекта, а не ключ: sec rm %s --all", strings.Split(ref, "/")[0])
@@ -733,7 +752,7 @@ func rmCommand(args []string) int {
 		}
 		delete(st.Projects, sp)
 		delete(st.Extends, sp) // осиротевшие исходящие связи удаляемого проекта
-		if err := store.Save(st, mkey); err != nil {
+		if err := st.Commit(); err != nil {
 			dieK(kindStore, "запись хранилища: %v", err)
 		}
 		audit.Record("rm", sp, fmt.Sprintf("проект целиком (%d ключей)", n))
@@ -748,7 +767,7 @@ func rmCommand(args []string) int {
 	}
 	delete(st.Projects[proj], key)
 	st.Prune(proj)
-	if err := store.Save(st, mkey); err != nil {
+	if err := st.Commit(); err != nil {
 		dieK(kindStore, "запись хранилища: %v", err)
 	}
 	audit.Record("rm", proj+"/"+key, "")
@@ -775,10 +794,12 @@ func otpCommand(args []string) int {
 	if !ok {
 		dieNotFound("нет %s/%s", proj, key)
 	}
-	if totp.IsHOTP(sec.Value) {
+	seed := mustText(sec.Val)
+	st.Close()
+	if totp.IsHOTP(seed) {
 		return hotpAdvance(proj, key, clip)
 	}
-	code, remain, err := totp.Code(sec.Value, time.Now())
+	code, remain, err := totp.Code(seed, time.Now())
 	if err != nil {
 		die("%s/%s: %v", proj, key, err)
 	}
@@ -797,22 +818,28 @@ func otpCommand(args []string) int {
 }
 
 // hotpAdvance выдаёт HOTP-код и сдвигает счётчик в сторе. Счётчик одноразовый,
-// поэтому чтение, инкремент и запись идут одной операцией под блокировкой.
+// поэтому чтение, инкремент и запись идут одной транзакцией записи.
 // Инкремент пишется по адресу настоящего значения (у ссылки/наследования —
 // в родителе: источник счётчика один) и не трогает историю/UpdatedAt —
 // это расход кода, а не ротация секрета.
 func hotpAdvance(proj, key string, clip bool) int {
-	unlock := store.Lock()
-	defer unlock()
-	st, mkey, _, err := store.Open(false)
-	if err != nil {
-		dieStore(err)
+	st, _, _, err := store.Begin(false)
+	readOnly := err != nil
+	if readOnly {
+		// стор не открылся на запись (read-only реплика, занятая блокировка) —
+		// код всё равно выдаём из снимка, предупредив, что счётчик не сдвинут
+		lockErr := err
+		if st, _, _, err = store.Open(false); err != nil {
+			dieStore(err)
+		}
+		warnf("счётчик HOTP не сохранён (%v) — код ниже, но повторный вызов выдаст его же", lockErr)
 	}
+	defer st.Close()
 	sec, _, source, ok := st.Lookup(proj, key)
 	if !ok {
 		dieNotFound("нет %s/%s", proj, key)
 	}
-	code, next, counter, err := totp.HOTPCode(sec.Value)
+	code, next, counter, err := totp.HOTPCode(mustText(sec.Val))
 	if err != nil {
 		die("%s/%s: %v", proj, key, err)
 	}
@@ -822,14 +849,16 @@ func hotpAdvance(proj, key string, clip bool) int {
 			tp, tk = p, k
 		}
 	}
-	cur := st.Projects[tp][tk]
-	cur.Value = next
-	st.Projects[tp][tk] = cur
-	if err := store.Save(st, mkey); err != nil {
-		// код уже посчитан — не выдать его из-за read-only стора (бэкап 0400,
-		// синхронизированная реплика) значит отказать в 2FA на ровном месте.
-		// Предупреждаем: счётчик не сдвинут, повторный вызов даст тот же код.
-		warnf("счётчик HOTP не сохранён (%v) — код ниже, но повторный вызов выдаст его же", err)
+	if !readOnly {
+		cur := st.Projects[tp][tk]
+		cur.Val = store.Text(next)
+		st.Projects[tp][tk] = cur
+		if err := st.Commit(); err != nil {
+			// код уже посчитан — не выдать его из-за read-only стора (бэкап 0400,
+			// синхронизированная реплика) значит отказать в 2FA на ровном месте.
+			// Предупреждаем: счётчик не сдвинут, повторный вызов даст тот же код.
+			warnf("счётчик HOTP не сохранён (%v) — код ниже, но повторный вызов выдаст его же", err)
+		}
 	}
 	audit.Record("otp", proj+"/"+key, fmt.Sprintf("hotp counter=%d", counter))
 	if clip {

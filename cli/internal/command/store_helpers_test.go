@@ -12,8 +12,8 @@ import (
 
 func TestEditBlock(t *testing.T) {
 	st := &store.Store{Version: 1, Projects: map[string]map[string]store.Secret{
-		"app":  {"OWN": {Value: "v"}, "R": {Ref: "base/X"}},
-		"base": {"X": {Value: "base-x"}},
+		"app":  {"OWN": {Val: store.Text("v")}, "R": {Ref: "base/X"}},
+		"base": {"X": {Val: store.Text("base-x")}},
 	}, Extends: map[string][]string{"app": {"base"}}}
 
 	if msg := editBlock(st, "app", "OWN"); msg != "" {
@@ -76,8 +76,8 @@ func TestSafeBaseName(t *testing.T) {
 func TestDecodedB64Len(t *testing.T) {
 	for n := 0; n <= 12; n++ {
 		enc := base64.StdEncoding.EncodeToString(make([]byte, n))
-		if got := decodedB64Len(enc); got != n {
-			t.Errorf("decodedB64Len(len=%d) = %d, ожидалось %d", len(enc), got, n)
+		if got := store.Text(enc).DecodedLen(); got != n {
+			t.Errorf("DecodedLen(len=%d) = %d, ожидалось %d", len(enc), got, n)
 		}
 	}
 }
@@ -103,10 +103,10 @@ func TestStoredFileMode(t *testing.T) {
 // get --out положит новый токен под именем старого сертификата.
 func TestClearFileMeta(t *testing.T) {
 	keys := map[string]store.Secret{
-		"A": {Value: "v", Meta: &store.Meta{Kind: "file", Filename: "a.p12", FileMode: "0644"}},
-		"B": {Value: "v", Meta: &store.Meta{Kind: "file", Filename: "b.pem", Note: "note"}},
-		"C": {Value: "v", Meta: &store.Meta{Kind: "password", Filename: "odd"}},
-		"D": {Value: "v"},
+		"A": {Val: store.Text("v"), Meta: &store.Meta{Kind: "file", Filename: "a.p12", FileMode: "0644"}},
+		"B": {Val: store.Text("v"), Meta: &store.Meta{Kind: "file", Filename: "b.pem", Note: "note"}},
+		"C": {Val: store.Text("v"), Meta: &store.Meta{Kind: "password", Filename: "odd"}},
+		"D": {Val: store.Text("v")},
 	}
 	for k := range keys {
 		clearFileMeta(keys, k)

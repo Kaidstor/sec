@@ -83,9 +83,9 @@ func TestCollectBinaryValues(t *testing.T) {
 	b64 := func(b []byte) string { return base64.StdEncoding.EncodeToString(b) }
 	st := &store.Store{Projects: map[string]map[string]store.Secret{
 		"keys": {
-			"P12": {Value: b64(raw), Enc: store.EncB64,
-				History: []store.Version{{Value: b64(old), Enc: store.EncB64, UpdatedAt: "2026-01-01T00:00:00Z"}}},
-			"TXT": {Value: "просто текстовое значение"},
+			"P12": {Val: store.Text(b64(raw)), Enc: store.EncB64,
+				History: []store.Version{{Val: store.Text(b64(old)), Enc: store.EncB64, UpdatedAt: "2026-01-01T00:00:00Z"}}},
+			"TXT": {Val: store.Text("просто текстовое значение")},
 		},
 	}}
 	bins := collectBinaryValues(st, storeScope{minLen: 4})
@@ -106,8 +106,8 @@ func TestCollectBinaryValues(t *testing.T) {
 func TestCollectStoreValuesSkipsConfig(t *testing.T) {
 	st := &store.Store{Projects: map[string]map[string]store.Secret{
 		"whois": {
-			"API_TOKEN": {Value: "supersecretvalue123"},
-			"PROVIDERS": {Value: "whoxy,ripe,domaintools", Meta: &store.Meta{Kind: store.KindConfig}},
+			"API_TOKEN": {Val: store.Text("supersecretvalue123")},
+			"PROVIDERS": {Val: store.Text("whoxy,ripe,domaintools"), Meta: &store.Meta{Kind: store.KindConfig}},
 		},
 	}}
 	values, skips := collectStoreValues(st, storeScope{minLen: 8})

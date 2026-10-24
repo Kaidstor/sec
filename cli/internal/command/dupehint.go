@@ -29,7 +29,7 @@ func dupeHints(st *store.Store, mkey []byte, proj string, written []string) []st
 			if s.Ref != "" {
 				continue // у ссылки нет собственного значения
 			}
-			fp := s.Enc + "\x00" + store.Fingerprint(mkey, s.Value)
+			fp := s.Enc + "\x00" + s.Val.Fingerprint(mkey)
 			groups[fp] = append(groups[fp], dupeEntry{p + "/" + k, s.UpdatedAt})
 			fpOf[p+"/"+k] = fp
 		}

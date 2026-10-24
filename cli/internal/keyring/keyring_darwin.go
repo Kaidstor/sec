@@ -22,16 +22,21 @@ func osKeyringName() string {
 	return fmt.Sprintf("macOS Keychain (service=%s, account=master)", keyringService())
 }
 
-func osKeyringRead() (string, error) {
+func osKeyringRead(account string) (string, error) {
 	out, err := exec.Command("security", "find-generic-password",
-		"-s", keyringService(), "-a", "master", "-w").Output()
+		"-s", keyringService(), "-a", account, "-w").Output()
 	return string(out), err
 }
 
-func osKeyringWrite(hexKey string) error {
+func osKeyringWrite(account, hexKey string) error {
 	cmd := exec.Command("security", "-i")
 	cmd.Stdin = strings.NewReader(fmt.Sprintf(
-		"add-generic-password -s %q -a master -w %s -U\n", keyringService(), hexKey))
+		"add-generic-password -s %q -a %s -w %s -U\n", keyringService(), account, hexKey))
 	cmd.Stdout, cmd.Stderr = nil, nil
 	return cmd.Run()
+}
+
+func osKeyringDelete(account string) error {
+	return exec.Command("security", "delete-generic-password",
+		"-s", keyringService(), "-a", account).Run()
 }

@@ -16,10 +16,14 @@ func osKeyringName() string {
 	return "нет системного хранилища ключа на этой ОС (env SEC_KEY / файл)"
 }
 
-func osKeyringRead() (string, error) {
+func osKeyringRead(string) (string, error) {
 	return "", errors.New("нет системного хранилища ключа на этой ОС")
 }
 
-func osKeyringWrite(string) error {
+func osKeyringWrite(string, string) error {
+	return errors.New("нет системного хранилища ключа на этой ОС")
+}
+
+func osKeyringDelete(string) error {
 	return errors.New("нет системного хранилища ключа на этой ОС")
 }

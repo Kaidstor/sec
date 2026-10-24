@@ -20,6 +20,7 @@ var (
 	procCredReadW  = advapi32.NewProc("CredReadW")
 	procCredWriteW = advapi32.NewProc("CredWriteW")
 	procCredFree   = advapi32.NewProc("CredFree")
+	procCredDelete = advapi32.NewProc("CredDeleteW")
 )
 
 const (
@@ -44,18 +45,18 @@ type credentialW struct {
 }
 
 // credTarget — TargetName записи в Credential Manager (аналог service у Keychain).
-func credTarget() string { return keyringService() + "/master" }
+func credTarget(account string) string { return keyringService() + "/" + account }
 
 func osKeyringAvailable() bool {
 	return procCredReadW.Find() == nil && procCredWriteW.Find() == nil
 }
 
 func osKeyringName() string {
-	return fmt.Sprintf("Windows Credential Manager (target=%s)", credTarget())
+	return fmt.Sprintf("Windows Credential Manager (target=%s)", credTarget(accountMaster))
 }
 
-func osKeyringRead() (string, error) {
-	target, err := windows.UTF16PtrFromString(credTarget())
+func osKeyringRead(account string) (string, error) {
+	target, err := windows.UTF16PtrFromString(credTarget(account))
 	if err != nil {
 		return "", err
 	}
@@ -74,12 +75,23 @@ func osKeyringRead() (string, error) {
 	return string(blob), nil
 }
 
-func osKeyringWrite(hexKey string) error {
-	target, err := windows.UTF16PtrFromString(credTarget())
+func osKeyringDelete(account string) error {
+	target, err := windows.UTF16PtrFromString(credTarget(account))
 	if err != nil {
 		return err
 	}
-	user, err := windows.UTF16PtrFromString("master")
+	if r, _, callErr := procCredDelete.Call(uintptr(unsafe.Pointer(target)), credTypeGeneric, 0); r == 0 {
+		return callErr
+	}
+	return nil
+}
+
+func osKeyringWrite(account, hexKey string) error {
+	target, err := windows.UTF16PtrFromString(credTarget(account))
+	if err != nil {
+		return err
+	}
+	user, err := windows.UTF16PtrFromString(account)
 	if err != nil {
 		return err
 	}
