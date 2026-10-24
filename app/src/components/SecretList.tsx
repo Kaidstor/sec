@@ -16,6 +16,8 @@ import {
   Trash2,
 } from "lucide-react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { memo } from "react";
+import { useShallow } from "zustand/react/shallow";
 import {
   SecretEntry,
   getOutCommand,
@@ -45,8 +47,15 @@ function matches(project: string, entry: SecretEntry, filter: string): boolean {
     .every((w) => hay.includes(w));
 }
 
-export function SecretList() {
-  const { data, loading, loadError, filter, lastProject, openDialog } = useApp();
+export const SecretList = memo(function SecretList() {
+  const { data, loading, loadError, filter, lastProject, openDialog } = useApp(useShallow((s) => ({
+    data: s.data,
+    loading: s.loading,
+    loadError: s.loadError,
+    filter: s.filter,
+    lastProject: s.lastProject,
+    openDialog: s.openDialog,
+  })));
 
   if (loadError) {
     return (
@@ -124,10 +133,16 @@ export function SecretList() {
       </section>
     );
   }
-}
+});
 
 function SecretRow({ project, entry }: { project: string; entry: SecretEntry }) {
-  const { openDialog, showToast, rememberProject, refresh, askConfirm } = useApp();
+  const { openDialog, showToast, rememberProject, refresh, askConfirm } = useApp(useShallow((s) => ({
+    openDialog: s.openDialog,
+    showToast: s.showToast,
+    rememberProject: s.rememberProject,
+    refresh: s.refresh,
+    askConfirm: s.askConfirm,
+  })));
   const ref = `${project}/${entry.key}`;
   const kind = entry.meta?.kind;
   const isTotp = kind === "totp";
