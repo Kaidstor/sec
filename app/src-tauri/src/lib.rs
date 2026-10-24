@@ -4,6 +4,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use tauri::Manager;
 
+#[cfg(target_os = "macos")]
+mod native_clipboard;
+
 #[derive(Serialize)]
 pub struct SecOutput {
     stdout: String,
@@ -40,7 +43,10 @@ fn sec_binary() -> Result<PathBuf, String> {
             }
         }
     }
-    Err("бинарь sec не найден. Установи: brew install kaidstor/tap/sec — или задай путь в SEC_BIN.".into())
+    Err(
+        "бинарь sec не найден. Установи: brew install kaidstor/tap/sec — или задай путь в SEC_BIN."
+            .into(),
+    )
 }
 
 const CLI_CASK: &str = "kaidstor/tap/sec";
@@ -140,9 +146,17 @@ fn envelope_error(stdout: &str) -> Option<String> {
 async fn run_sec(args: Vec<String>, stdin: Option<String>) -> Result<SecOutput, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let bin = sec_binary()?;
+        #[cfg(target_os = "macos")]
+        if let Some(reference) = native_clipboard::copy_reference(&args, stdin.is_some()) {
+            return native_clipboard::copy_secret(&bin, reference);
+        }
         let mut cmd = Command::new(bin);
         cmd.args(&args)
-            .stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() })
+            .stdin(if stdin.is_some() {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            })
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         let mut child = cmd.spawn().map_err(|e| format!("запуск sec: {e}"))?;
@@ -164,7 +178,10 @@ async fn run_sec(args: Vec<String>, stdin: Option<String>) -> Result<SecOutput, 
                 msg = envelope_error(&stdout).unwrap_or_default();
             }
             if msg.is_empty() {
-                Err(format!("sec завершился с кодом {}", out.status.code().unwrap_or(-1)))
+                Err(format!(
+                    "sec завершился с кодом {}",
+                    out.status.code().unwrap_or(-1)
+                ))
             } else {
                 Err(msg)
             }
@@ -286,7 +303,13 @@ pub fn run() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![run_sec, cli_install, upgrade_cli, reveal_main_window, relaunch_app])
+        .invoke_handler(tauri::generate_handler![
+            run_sec,
+            cli_install,
+            upgrade_cli,
+            reveal_main_window,
+            relaunch_app
+        ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 // macOS: крестик прячет окно и убирает приложение из Dock

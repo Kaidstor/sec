@@ -5,9 +5,8 @@ export interface SecOutput {
   stderr: string;
 }
 
-// Значения секретов через эти вызовы не проходят: копирование делает сам CLI
-// (--clip), просмотр — маской (--peek). Исключение — add/edit-формы, где
-// значение вводит пользователь.
+// В JS приходит только статус копирования: значение остаётся в нативном
+// бэкенде или CLI. Исключение — add/edit-формы с пользовательским вводом.
 export async function runSecFull(args: string[], stdin?: string): Promise<SecOutput> {
   return invoke<SecOutput>("run_sec", { args, stdin: stdin ?? null });
 }

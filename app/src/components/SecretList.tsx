@@ -98,7 +98,7 @@ export const SecretList = memo(function SecretList() {
         <ProjectSection key={project} project={project} entries={entries} />
       ))}
       <div className="px-4 pt-3 text-[11px] text-zinc-600">
-        Клик по строке кладёт значение в буфер (через sec, приложение его не видит). Правый клик — все действия.
+        Клик по строке копирует значение в буфер. Правый клик — все действия.
       </div>
     </div>
   );
