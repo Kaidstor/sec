@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -29,7 +28,7 @@ func shareWithFakeK4tr(t *testing.T, k4trReply string, k4trCode int) (map[string
 	t.Cleanup(srv.Close)
 	bin := t.TempDir()
 	argsFile := filepath.Join(bin, "args")
-	script := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$@\" > '%s'\nprintf '%%s\\n' '%s'\nexit %d\n", argsFile, k4trReply, k4trCode)
+	script := fmt.Sprintf("#!/bin/sh\nread url\nprintf '%%s\\n' \"$@\" \"$url\" > '%s'\nprintf '%%s\\n' '%s'\nexit %d\n", argsFile, k4trReply, k4trCode)
 	if err := os.WriteFile(filepath.Join(bin, "k4tr"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -65,11 +64,9 @@ func TestShareShortensWithoutSendingKeyToK4tr(t *testing.T) {
 	if warning != "" {
 		t.Errorf("лишнее предупреждение: %s", warning)
 	}
-	if len(args) != 6 || args[0] != "create" || args[1] != base || args[2] != "--multi" || args[3] != "--ttl" || args[5] != "--json" {
-		t.Fatalf("аргументы k4tr: %q", args)
-	}
-	if ttl, _ := strconv.Atoi(args[4]); ttl < 3500 || ttl > 3600 {
-		t.Errorf("--ttl %s, ждали срок share-ссылки ≈3600", args[4])
+	want := []string{"create", "-", "--multi", "--ttl", "86400", "--json", base}
+	if strings.Join(args, " ") != strings.Join(want, " ") {
+		t.Fatalf("k4tr: аргументы и stdin %q, ждали %q", args, want)
 	}
 	took, _ := data["tookMs"].(float64)
 	shorten, ok := data["shortenMs"].(float64)

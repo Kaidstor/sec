@@ -9,12 +9,11 @@ import (
 	"github.com/kaidstor/sec/internal/share"
 	"github.com/kaidstor/sec/internal/store"
 
-	"context"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"net"
 	"net/url"
 	"os"
@@ -261,6 +260,13 @@ func shareCreateCommand(args []string) int {
 	}
 	st.Close() // дальше сеть — снимок стора не держим
 	started := time.Now()
+	var k4tr *k4trProcess
+	if shortener == "k4tr" {
+		var kerr error
+		if k4tr, kerr = startK4tr(ttl); kerr != nil {
+			warnf("k4tr не запустился, ссылка будет полной: %v", kerr)
+		}
+	}
 	key, err := share.NewKey()
 	if err != nil {
 		dieK(kindIO, "%v", err)
@@ -276,10 +282,10 @@ func shareCreateCommand(args []string) int {
 	link := share.SecretURL(client.BaseURL, id, key)
 	longLink, shortAddr := link, ""
 	var shortenTook time.Duration
-	if shortener == "k4tr" {
+	if k4tr != nil {
 		base, fragment, _ := strings.Cut(link, "#")
 		shortenStarted := time.Now()
-		short, serr := shortenK4tr(base, expiresAt)
+		short, serr := k4tr.shorten(base)
 		shortenTook = time.Since(shortenStarted)
 		if serr != nil {
 			warnf("k4tr не укоротил ссылку, отдаю полную: %v", serr)
@@ -352,32 +358,57 @@ func k4trBinary() (string, error) {
 	return "", errors.New("k4tr не найден в PATH, ~/.local/bin и brew")
 }
 
-// shortenK4tr создаёт многоразовую короткую ссылку, которая гаснет вместе с
-// share-ссылкой. Передавать только адрес без фрагмента: ключ расшифровки
-// дописывается к короткой ссылке, а браузер при 302 без фрагмента в Location
-// переносит исходный фрагмент на новый адрес.
-func shortenK4tr(long string, expiresAt time.Time) (string, error) {
+// k4trProcess — k4tr, запущенный до запроса к share-серверу: python, вход и
+// TLS-соединение готовятся параллельно, адрес приходит через stdin. Если sec
+// завершится раньше, k4tr получит EOF и ничего не создаст.
+type k4trProcess struct {
+	cmd   *exec.Cmd
+	stdin io.WriteCloser
+	out   bytes.Buffer
+}
+
+func startK4tr(ttl time.Duration) (*k4trProcess, error) {
 	bin, err := k4trBinary()
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	ttl := max(int(math.Ceil(time.Until(expiresAt).Seconds())), 60)
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, bin, "create", long, "--multi", "--ttl", strconv.Itoa(ttl), "--json")
+	cmd := exec.Command(bin, "create", "-", "--multi", "--ttl", strconv.Itoa(int(ttl.Seconds())), "--json")
 	// k4tr с истёкшей сессией читает пароль через `sec get` — из того же
 	// каталога, что и этот sec: у приложения из Finder brew нет в PATH.
 	if self, err := os.Executable(); err == nil {
 		cmd.Env = mergedEnv(map[string]string{"PATH": filepath.Dir(self) + string(os.PathListSeparator) + os.Getenv("PATH")})
 	}
-	out, runErr := cmd.Output()
+	p := &k4trProcess{cmd: cmd}
+	cmd.Stdout = &p.out
+	if p.stdin, err = cmd.StdinPipe(); err != nil {
+		return nil, err
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("k4tr: %v", err)
+	}
+	return p, nil
+}
+
+// shorten создаёт многоразовую короткую ссылку, которая гаснет вместе с
+// share-ссылкой. Передавать только адрес без фрагмента: ключ расшифровки
+// дописывается к короткой ссылке, а браузер при 302 без фрагмента в Location
+// переносит исходный фрагмент на новый адрес.
+func (p *k4trProcess) shorten(long string) (string, error) {
+	_, werr := io.WriteString(p.stdin, long+"\n")
+	p.stdin.Close()
+	timer := time.AfterFunc(time.Minute, func() { p.cmd.Process.Kill() })
+	runErr := p.cmd.Wait()
+	timer.Stop()
 	var resp struct {
 		Data struct {
 			ShortURL string `json:"short_url"`
 		} `json:"data"`
 		Error *failure `json:"error"`
 	}
-	if jerr := json.Unmarshal(out, &resp); jerr != nil {
+	if jerr := json.Unmarshal(p.out.Bytes(), &resp); jerr != nil {
+		if runErr == nil {
+			runErr = werr
+		}
 		if runErr != nil {
 			return "", fmt.Errorf("k4tr: %v", runErr)
 		}
