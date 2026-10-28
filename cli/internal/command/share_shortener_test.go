@@ -71,6 +71,11 @@ func TestShareShortensWithoutSendingKeyToK4tr(t *testing.T) {
 	if ttl, _ := strconv.Atoi(args[4]); ttl < 3500 || ttl > 3600 {
 		t.Errorf("--ttl %s, ждали срок share-ссылки ≈3600", args[4])
 	}
+	took, _ := data["tookMs"].(float64)
+	shorten, ok := data["shortenMs"].(float64)
+	if !ok || shorten > took {
+		t.Errorf("tookMs=%v shortenMs=%v: время k4tr входит в общее", data["tookMs"], data["shortenMs"])
+	}
 }
 
 func TestShareKeepsLongLinkWhenK4trFails(t *testing.T) {

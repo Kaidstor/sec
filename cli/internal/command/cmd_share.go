@@ -55,6 +55,11 @@ func shareConfig(st *store.Store) (baseURL, token string, ok bool) {
 	return baseURL, token, baseURL != "" && token != ""
 }
 
+// secondsRu — длительность в секундах с десятыми и запятой: «0,9 с».
+func secondsRu(d time.Duration) string {
+	return strings.Replace(fmt.Sprintf("%.1f с", d.Seconds()), ".", ",", 1)
+}
+
 // shareSetting — непустая env-переменная поверх _share/<key> из стора.
 func shareSetting(st *store.Store, env, key string) string {
 	if v := os.Getenv(env); v != "" {
@@ -255,6 +260,7 @@ func shareCreateCommand(args []string) int {
 		client = mustShareClient(st)
 	}
 	st.Close() // дальше сеть — снимок стора не держим
+	started := time.Now()
 	key, err := share.NewKey()
 	if err != nil {
 		dieK(kindIO, "%v", err)
@@ -269,9 +275,13 @@ func shareCreateCommand(args []string) int {
 	}
 	link := share.SecretURL(client.BaseURL, id, key)
 	longLink, shortAddr := link, ""
+	var shortenTook time.Duration
 	if shortener == "k4tr" {
 		base, fragment, _ := strings.Cut(link, "#")
-		if short, serr := shortenK4tr(base, expiresAt); serr != nil {
+		shortenStarted := time.Now()
+		short, serr := shortenK4tr(base, expiresAt)
+		shortenTook = time.Since(shortenStarted)
+		if serr != nil {
 			warnf("k4tr не укоротил ссылку, отдаю полную: %v", serr)
 		} else {
 			link, shortAddr = short+"#"+fragment, short
@@ -298,6 +308,11 @@ func shareCreateCommand(args []string) int {
 	if shortAddr != "" {
 		msg += "; короткий адрес k4tr гаснет в тот же срок"
 	}
+	took := time.Since(started)
+	msg += "; создана за " + secondsRu(took)
+	if shortenTook > 0 {
+		msg += " (k4tr " + secondsRu(shortenTook) + ")"
+	}
 	copied := false
 	if !noClip {
 		if cerr := clipboardWrite(link); cerr == nil {
@@ -309,9 +324,12 @@ func shareCreateCommand(args []string) int {
 		fmt.Fprintln(os.Stderr, "sec: "+msg)
 	}
 	data := map[string]any{"url": link, "id": id, "target": target, "once": !multi,
-		"expiresAt": expiresAt.Format(time.RFC3339), "clipboard": copied}
+		"expiresAt": expiresAt.Format(time.RFC3339), "clipboard": copied, "tookMs": took.Milliseconds()}
 	if shortAddr != "" {
 		data["longUrl"] = longLink
+	}
+	if shortenTook > 0 {
+		data["shortenMs"] = shortenTook.Milliseconds()
 	}
 	emit(data)
 	return 0
