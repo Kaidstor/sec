@@ -358,7 +358,7 @@ func k4trBinary() (string, error) {
 	return "", errors.New("k4tr не найден в PATH, ~/.local/bin и brew")
 }
 
-// k4trProcess — k4tr, запущенный до запроса к share-серверу: python, вход и
+// k4trProcess — k4tr, запущенный до запроса к share-серверу: сессия и
 // TLS-соединение готовятся параллельно, адрес приходит через stdin. Если sec
 // завершится раньше, k4tr получит EOF и ничего не создаст.
 type k4trProcess struct {
