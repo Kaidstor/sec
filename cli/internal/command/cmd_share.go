@@ -9,14 +9,19 @@ import (
 	"github.com/kaidstor/sec/internal/share"
 	"github.com/kaidstor/sec/internal/store"
 
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -45,17 +50,22 @@ func shareCommand(args []string) int {
 // поверх стора (_share/URL, _share/TOKEN). st может быть nil (стор недоступен,
 // а конфиг целиком в env — например CI).
 func shareConfig(st *store.Store) (baseURL, token string, ok bool) {
-	baseURL, token = os.Getenv("SEC_SHARE_URL"), os.Getenv("SEC_SHARE_TOKEN")
+	baseURL = shareSetting(st, "SEC_SHARE_URL", "URL")
+	token = shareSetting(st, "SEC_SHARE_TOKEN", "TOKEN")
+	return baseURL, token, baseURL != "" && token != ""
+}
+
+// shareSetting — непустая env-переменная поверх _share/<key> из стора.
+func shareSetting(st *store.Store, env, key string) string {
+	if v := os.Getenv(env); v != "" {
+		return v
+	}
 	if st != nil {
-		keys := st.Projects[shareConfigProject]
-		if s, ok := keys["URL"]; ok && baseURL == "" {
-			baseURL = mustText(s.Val)
-		}
-		if s, ok := keys["TOKEN"]; ok && token == "" {
-			token = mustText(s.Val)
+		if s, ok := st.Projects[shareConfigProject][key]; ok {
+			return mustText(s.Val)
 		}
 	}
-	return baseURL, token, baseURL != "" && token != ""
+	return ""
 }
 
 func mustShareClient(st *store.Store) *share.Client {
@@ -113,6 +123,7 @@ func shareCreateCommand(args []string) int {
 	if storeErr != nil {
 		st = nil // без стора работают только - и --file c env-конфигом
 	}
+	shortener := shareSetting(st, "SEC_SHARE_SHORTENER", "SHORTENER")
 	var client *share.Client
 	if ref == "-" { // ввод значения может длиться сколько угодно — снимок стора не держим
 		client = mustShareClient(st)
@@ -257,12 +268,25 @@ func shareCreateCommand(args []string) int {
 		dieShare(err)
 	}
 	link := share.SecretURL(client.BaseURL, id, key)
+	longLink, shortAddr := link, ""
+	if shortener == "k4tr" {
+		base, fragment, _ := strings.Cut(link, "#")
+		if short, serr := shortenK4tr(base, expiresAt); serr != nil {
+			warnf("k4tr не укоротил ссылку, отдаю полную: %v", serr)
+		} else {
+			link, shortAddr = short+"#"+fragment, short
+		}
+	}
 
 	mode := "once"
 	if multi {
 		mode = "multi"
 	}
-	audit.Record("share", target, fmt.Sprintf("→ %s, id=%s, ttl=%s, %s", hostOf(client.BaseURL), id, ttlStr, mode))
+	details := fmt.Sprintf("→ %s, id=%s, ttl=%s, %s", hostOf(client.BaseURL), id, ttlStr, mode)
+	if shortAddr != "" {
+		details += ", " + shortAddr
+	}
+	audit.Record("share", target, details)
 
 	// URL — в stdout (подставляется в $(...)), пояснение — в stderr
 	fmt.Fprintln(stdout, link)
@@ -270,6 +294,9 @@ func shareCreateCommand(args []string) int {
 	msg := fmt.Sprintf("одноразовая ссылка: сгорит при первом открытии или %s", until)
 	if multi {
 		msg = fmt.Sprintf("многоразовая ссылка: живёт до %s", until)
+	}
+	if shortAddr != "" {
+		msg += "; короткий адрес k4tr гаснет в тот же срок"
 	}
 	copied := false
 	if !noClip {
@@ -281,9 +308,70 @@ func shareCreateCommand(args []string) int {
 	if !jsonMode { // в JSON то же самое — поля expiresAt, once, clipboard
 		fmt.Fprintln(os.Stderr, "sec: "+msg)
 	}
-	emit(map[string]any{"url": link, "id": id, "target": target, "once": !multi,
-		"expiresAt": expiresAt.Format(time.RFC3339), "clipboard": copied})
+	data := map[string]any{"url": link, "id": id, "target": target, "once": !multi,
+		"expiresAt": expiresAt.Format(time.RFC3339), "clipboard": copied}
+	if shortAddr != "" {
+		data["longUrl"] = longLink
+	}
+	emit(data)
 	return 0
+}
+
+// k4trBinary ищет CLI k4tr: у приложения из Finder PATH без ~/.local/bin и brew.
+func k4trBinary() (string, error) {
+	if p, err := exec.LookPath("k4tr"); err == nil {
+		return p, nil
+	}
+	candidates := []string{"/opt/homebrew/bin/k4tr", "/usr/local/bin/k4tr"}
+	if home, err := os.UserHomeDir(); err == nil {
+		candidates = append([]string{filepath.Join(home, ".local/bin/k4tr")}, candidates...)
+	}
+	for _, c := range candidates {
+		if fi, err := os.Stat(c); err == nil && fi.Mode().IsRegular() {
+			return c, nil
+		}
+	}
+	return "", errors.New("k4tr не найден в PATH, ~/.local/bin и brew")
+}
+
+// shortenK4tr создаёт многоразовую короткую ссылку, которая гаснет вместе с
+// share-ссылкой. Передавать только адрес без фрагмента: ключ расшифровки
+// дописывается к короткой ссылке, а браузер при 302 без фрагмента в Location
+// переносит исходный фрагмент на новый адрес.
+func shortenK4tr(long string, expiresAt time.Time) (string, error) {
+	bin, err := k4trBinary()
+	if err != nil {
+		return "", err
+	}
+	ttl := max(int(math.Ceil(time.Until(expiresAt).Seconds())), 60)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, "create", long, "--multi", "--ttl", strconv.Itoa(ttl), "--json")
+	// k4tr с истёкшей сессией читает пароль через `sec get` — из того же
+	// каталога, что и этот sec: у приложения из Finder brew нет в PATH.
+	if self, err := os.Executable(); err == nil {
+		cmd.Env = mergedEnv(map[string]string{"PATH": filepath.Dir(self) + string(os.PathListSeparator) + os.Getenv("PATH")})
+	}
+	out, runErr := cmd.Output()
+	var resp struct {
+		Data struct {
+			ShortURL string `json:"short_url"`
+		} `json:"data"`
+		Error *failure `json:"error"`
+	}
+	if jerr := json.Unmarshal(out, &resp); jerr != nil {
+		if runErr != nil {
+			return "", fmt.Errorf("k4tr: %v", runErr)
+		}
+		return "", fmt.Errorf("k4tr вернул не JSON: %v", jerr)
+	}
+	if resp.Error != nil {
+		return "", errors.New(resp.Error.Message)
+	}
+	if !strings.HasPrefix(resp.Data.ShortURL, "https://") && !strings.HasPrefix(resp.Data.ShortURL, "http://") {
+		return "", errors.New("k4tr не вернул короткую ссылку (проверь k4tr list)")
+	}
+	return resp.Data.ShortURL, nil
 }
 
 // packEntries собирает содержимое пака: текстовые значения как есть, файловые
@@ -353,8 +441,19 @@ func packEntries(keys map[string]store.Secret, only string) ([]share.PackEntry, 
 func shareSetupCommand(args []string) int {
 	fs := newFlagSet("share setup")
 	var forget bool
+	var shortener string
 	fs.BoolVar(&forget, "forget", false, "забыть сохранённые адрес и токен")
+	fs.StringVar(&shortener, "shortener", "", "укорачивать ссылки: k4tr или none (выключить)")
 	_ = fs.Parse(args)
+	switch shortener {
+	case "", "none":
+	case "k4tr":
+		if _, err := k4trBinary(); err != nil {
+			dieK(kindConfig, "%v", err)
+		}
+	default:
+		die("--shortener: k4tr или none (не %q)", shortener)
+	}
 
 	if forget {
 		st, _, _, err := store.Begin(false)
@@ -376,8 +475,11 @@ func shareSetupCommand(args []string) int {
 	}
 
 	rawURL := fs.Arg(0)
+	if rawURL == "" && shortener != "" {
+		return shareSetShortener(shortener)
+	}
 	if rawURL == "" {
-		die("укажи адрес: sec share setup <url>")
+		die("укажи адрес: sec share setup <url> (или --shortener k4tr|none)")
 	}
 	baseURL := normalizeShareURL(rawURL)
 	checkShareURL(baseURL)
@@ -413,12 +515,52 @@ func shareSetupCommand(args []string) int {
 	keys := st.Project(shareConfigProject)
 	store.Put(keys, "URL", baseURL)
 	store.Put(keys, "TOKEN", token)
+	putShortener(keys, shortener)
 	if err := st.Commit(); err != nil {
 		dieK(kindStore, "запись хранилища: %v", err)
 	}
-	audit.Record("share-setup", hostOf(baseURL), "")
+	details := ""
+	if shortener != "" {
+		details = "shortener=" + shortener
+	}
+	audit.Record("share-setup", hostOf(baseURL), details)
 	fmt.Fprintf(stdout, "подключено: %s (токен в зашифрованном сторе)\n", baseURL)
 	emit(map[string]any{"url": baseURL})
+	return 0
+}
+
+func putShortener(keys map[string]store.Secret, shortener string) {
+	switch shortener {
+	case "none":
+		delete(keys, "SHORTENER")
+	case "k4tr":
+		store.Put(keys, "SHORTENER", shortener)
+	}
+}
+
+func shareSetShortener(shortener string) int {
+	st, _, _, err := store.Begin(true)
+	if err != nil {
+		dieStore(err)
+	}
+	defer st.Close()
+	keys, ok := st.Projects[shareConfigProject]
+	if !ok && shortener != "none" {
+		dieK(kindConfig, "share не настроен: сначала sec share setup <url>")
+	}
+	if ok {
+		putShortener(keys, shortener)
+	}
+	if err := st.Commit(); err != nil {
+		dieK(kindStore, "запись хранилища: %v", err)
+	}
+	audit.Record("share-setup", "", "shortener="+shortener)
+	if shortener == "none" {
+		fmt.Fprintln(stdout, "укорачивание ссылок выключено")
+	} else {
+		fmt.Fprintf(stdout, "ссылки укорачиваются через %s: многоразовая короткая ссылка гаснет вместе с share-ссылкой\n", shortener)
+	}
+	emit(map[string]any{"shortener": shortener})
 	return 0
 }
 
@@ -515,7 +657,7 @@ func shareRevokeCommand(args []string) int {
 	}
 	id := share.IDFromURL(arg)
 	if id == "" {
-		die("не понял id в %q", arg)
+		die("не понял id в %q — короткую ссылку отзывай по id из sec share ls", arg)
 	}
 	var st *store.Store
 	if s, _, _, err := store.Open(false); err == nil {

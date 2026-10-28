@@ -135,6 +135,7 @@ func TestSecretURLAndIDFromURL(t *testing.T) {
 		{"https://share.example.com/s/Ab12", "Ab12"},
 		{"Ab12", "Ab12"},
 		{"https://share.example.com/s/Ab12/", "Ab12"},
+		{"https://k4tr.ru/AbC234#key", ""},
 	} {
 		if got := IDFromURL(c.in); got != c.want {
 			t.Errorf("IDFromURL(%q) = %q, want %q", c.in, got, c.want)

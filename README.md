@@ -130,7 +130,10 @@ sec scan --staged
   stores ciphertext only; the key lives in the URL fragment and decryption
   happens in the recipient's browser. Self-hosted server —
   [`server/`](server/); point the CLI at yours with
-  `sec share setup <url>` and a server-issued token. How it works inside —
+  `sec share setup <url>` and a server-issued token. Short links via a
+  self-hosted [k4tr](https://github.com/Kaidstor/k4tr):
+  `sec share setup --shortener k4tr` — the shortener gets the address without
+  the key fragment, and its link expires with the share link. How it works inside —
   [`docs/share.md`](docs/share.md) (in Russian).
 - **Migration and sync** — `backup` / `restore` / `sync` (a portable
   passphrase-protected blob), `rekey` (master key rotation), a bridge to

@@ -213,6 +213,7 @@ sec share sec-share/TOKEN_<ИМЯ>                              # однораз
 | 2FA-код (печатать в чат безопасно) | `sec otp <proj>/<KEY>` |
 | передать секрет человеку | `sec share <proj>/<KEY>` (URL печатать можно) |
 | передать пак целиком | `sec share <proj> --all` или `--only A,B` (получатель скачает `.env`) |
+| короткие share-ссылки | `sec share setup --shortener k4tr` (`none` — выключить): `https://k4tr.ru/<код>#<ключ>`, ключ в k4tr не уходит; при сбое k4tr — полная ссылка и предупреждение |
 | что пора ротировать / здоровье стора | `sec stale`, `sec doctor` |
 | кто трогал секреты | `sec log [proj[/KEY]]` |
 | что из CLI используется, а что мертво | `sec stats [--days 14]` |

@@ -331,6 +331,7 @@ Credential Manager (fallback: env SEC_KEY / файл).
   sec share - | --file <путь>          поделиться значением со stdin / файлом с диска
   sec share ls | revoke <id|url>       активные ссылки / досрочно отозвать
   sec share setup <url>                подключить сервер ссылок (токен — скрытым вводом)
+  sec share setup --shortener k4tr     укорачивать ссылки через k4tr (none — выключить)
   sec scan <path...|-|--staged>        найти сохранённые значения в файлах/диффе
   sec redact <path...|-> [--strict]    вычистить секреты из текста → stdout: значения стора
                                        и правила (поля *_TOKEN/*_PASSWORD, пароль в URI, PEM)
@@ -443,6 +444,7 @@ kind: config — несекретная настройка (endpoint, разме
   SEC_PASSPHRASE  passphrase для backup/restore без интерактива
   SEC_SHARE_URL   адрес сервера ссылок — поверх сохранённого (sec share setup)
   SEC_SHARE_TOKEN токен сервера ссылок — поверх сохранённого
+  SEC_SHARE_SHORTENER  укорачиватель ссылок k4tr|none — поверх сохранённого
 
 Общие флаги (в любом месте до --):
   --json          ответ любой команды — JSON-конвертом в stdout, отказы тоже:
@@ -472,6 +474,8 @@ cancelled, interrupted.
 браузер серверу не отправляет. Ссылка по умолчанию одноразовая (--multi —
 многоразовая) и живёт --ttl (1h…7d, умолч. 24h) — сгорает по первому из
 событий. URL целиком = секрет: канал передачи выбирай как для пароля.
+После sec share setup --shortener k4tr ссылка выглядит как https://k4tr.ru/<код>#<ключ>: в k4tr
+уходит адрес без ключа, короткий адрес многоразовый и гаснет в срок ссылки.
 `
 
 // commandAliases приводит синонимы к каноническому имени — чтобы счётчик

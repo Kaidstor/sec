@@ -122,13 +122,16 @@ func SecretURL(baseURL, id string, key []byte) string {
 	return strings.TrimRight(baseURL, "/") + "/s/" + id + "#" + base64.RawURLEncoding.EncodeToString(key)
 }
 
-// IDFromURL вырезает id из полной ссылки (…/s/<id>#…); голый id — как есть.
+// IDFromURL вырезает id из полной ссылки (…/s/<id>#…); голый id — как есть,
+// URL без /s/ (например, короткая ссылка) — "".
 func IDFromURL(s string) string {
 	if i := strings.IndexByte(s, '#'); i >= 0 {
 		s = s[:i]
 	}
 	if i := strings.Index(s, "/s/"); i >= 0 {
 		s = s[i+3:]
+	} else if strings.Contains(s, "://") {
+		return ""
 	}
 	return strings.Trim(s, "/")
 }

@@ -119,6 +119,9 @@ sec scan --staged
   сервер хранит только шифротекст; ключ — во фрагменте URL, расшифровка — в
   браузере получателя. Self-hosted сервер — [`server/`](server/), готовый
   инстанс: `sec share setup <url>` с токеном, выпущенным на сервере.
+  Короткие ссылки через свой [k4tr](https://github.com/Kaidstor/k4tr):
+  `sec share setup --shortener k4tr` — укорачиватель получает адрес без
+  ключа из фрагмента, короткая ссылка гаснет вместе с share-ссылкой.
   Как это устроено внутри —
   [«sec share: одноразовые ссылки»](https://notes.kaidstor.ru/6982ea92-d6d2-4183-baf4-37d9c8e3acd5)
   ([`docs/share.md`](docs/share.md)).
