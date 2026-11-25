@@ -17,5 +17,6 @@ WITH_CLI=0 # CLI на Go, релизится отдельно: корневой 
 TAG_PREFIX=app-v
 # автобамп Homebrew-каска (version/sha256 + push tap) после публикации
 BREW_CASK=../../homebrew-tap/Casks/sec-app.rb
+DMG_ACCENT="#38BDF8"
 
 source ../../_release/tauri-release.sh
